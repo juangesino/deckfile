@@ -4,9 +4,25 @@ build-backend = "hatchling.build"
 
 [project]
 name = "deckfile"
-version = "0.0.1"
+version = "0.1.0"
 description = "Generate high-quality charts from YAML definitions"
+readme = "README.md"
+license = "MIT"
 requires-python = ">=3.11"
+authors = [
+    { name = "Juan Gesino", email = "juangesino.pub@gmail.com" },
+]
+keywords = ["charts", "yaml", "data-visualization", "matplotlib", "duckdb"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Visualization",
+]
 dependencies = [
     "matplotlib>=3.7",
     "numpy>=1.24",
@@ -20,6 +36,11 @@ dependencies = [
 svg = ["cairosvg>=2.7"]
 gsheets = ["gspread>=6.0", "google-auth>=2.0"]
 all = ["deckfile[svg]", "deckfile[gsheets]"]
+
+[project.urls]
+Homepage = "https://github.com/juangesino/deckfile"
+Repository = "https://github.com/juangesino/deckfile"
+Issues = "https://github.com/juangesino/deckfile/issues"
 
 [project.scripts]
 deck = "deckfile.cli:main"
