@@ -1,0 +1,31 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "deckfile"
+version = "0.0.1"
+description = "Generate high-quality charts from YAML definitions"
+requires-python = ">=3.11"
+dependencies = [
+    "matplotlib>=3.7",
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "pyyaml>=6.0",
+    "duckdb>=1.0",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+svg = ["cairosvg>=2.7"]
+gsheets = ["gspread>=6.0", "google-auth>=2.0"]
+all = ["deckfile[svg]", "deckfile[gsheets]"]
+
+[project.scripts]
+deck = "deckfile.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/deckfile"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/deckfile/scaffold" = "deckfile/scaffold"

@@ -1,0 +1,37 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# deckfile.yaml — chart definitions
+# Generate all charts:  deck build
+# Build a single chart: deck build -s my_chart
+# List all charts:      deck list
+# ═══════════════════════════════════════════════════════════════════════════════
+
+defaults:
+  output_dir: "./output"
+  figsize: [16, 8.5]
+  theme:
+    brand: "#3a58ed"
+
+# ── Data sources ──────────────────────────────────────────────────────────────
+
+sources:
+  sample:
+    type: file
+    path: "data/sample.csv"
+
+# ── Charts ────────────────────────────────────────────────────────────────────
+
+charts:
+  monthly_revenue:
+    title: "Monthly Revenue"
+    subtitle: "Sample chart — edit me!"
+    source: sample
+    type: bar
+    columns:
+      x: "month"
+      y: "revenue"
+    x_labels:
+      mode: column
+      column: "month"
+    y_format:
+      style: "$K"
+      step: 10
