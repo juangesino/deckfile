@@ -5,11 +5,13 @@ Usage:
     deck build myconfig.yaml         # Build from a specific file
     deck build -s monthly_calls      # Build only selected chart(s)
     deck list                        # List all charts in deckfile.yaml
+    deck docs                        # Print the README documentation
 """
 
 from __future__ import annotations
 
 import argparse
+import importlib.resources
 import sys
 import traceback
 from pathlib import Path
@@ -32,6 +34,21 @@ def find_config(explicit: str | None = None) -> str:
     print(f"Error: no {DEFAULT_CONFIG} found in current directory.")
     print("Specify a path: deck build <path>")
     sys.exit(1)
+
+
+def cmd_docs(args: argparse.Namespace) -> None:
+    # In editable installs the force-included README may not exist inside the
+    # package directory, so fall back to the repo root.
+    pkg_readme = importlib.resources.files("deckfile").joinpath("README.md")
+    try:
+        text = pkg_readme.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        repo_readme = Path(__file__).resolve().parents[2] / "README.md"
+        if not repo_readme.exists():
+            print("README.md not found.")
+            sys.exit(1)
+        text = repo_readme.read_text(encoding="utf-8")
+    print(text)
 
 
 def cmd_init(args: argparse.Namespace) -> None:
@@ -76,6 +93,9 @@ def main(argv: list[str] | None = None) -> None:
         help="Directory to initialize (default: current directory)",
     )
 
+    # deck docs
+    subparsers.add_parser("docs", help="Print the README documentation")
+
     # deck build
     build_parser = subparsers.add_parser("build", help="Build charts from a deckfile")
     build_parser.add_argument(
@@ -119,7 +139,9 @@ def main(argv: list[str] | None = None) -> None:
     debug = getattr(args, "debug", False)
 
     try:
-        if args.command == "init":
+        if args.command == "docs":
+            cmd_docs(args)
+        elif args.command == "init":
             cmd_init(args)
         elif args.command == "build":
             cmd_build(args)
