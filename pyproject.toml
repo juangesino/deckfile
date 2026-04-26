@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "deckfile"
-version = "0.1.1"
+version = "0.2.0"
 description = "Generate high-quality charts from YAML definitions"
 readme = "README.md"
 license = "MIT"
@@ -35,7 +35,8 @@ dependencies = [
 [project.optional-dependencies]
 svg = ["cairosvg>=2.7"]
 gsheets = ["gspread>=6.0", "google-auth>=2.0"]
-all = ["deckfile[svg]", "deckfile[gsheets]"]
+snowflake = ["snowflake-connector-python>=3.0"]
+all = ["deckfile[svg]", "deckfile[gsheets]", "deckfile[snowflake]"]
 
 [project.urls]
 Homepage = "https://github.com/juangesino/deckfile"

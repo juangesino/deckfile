@@ -24,7 +24,7 @@
 
 - **YAML-first**: one config file defines all your charts
 - **SQL transforms**: reshape data with DuckDB queries, reference upstream sources with `ref()`
-- **Multiple data sources**: local CSV files, remote URLs, Google Sheets, and derived SQL views
+- **Multiple data sources**: local CSV files, remote URLs, Google Sheets, Snowflake, and derived SQL views
 - **Automatic dependency resolution**: sources that depend on other sources are resolved via topological sort
 - **Publication-ready output**: high-DPI PNGs with customizable themes, branding, and annotations
 - **Fluent Python API**: use the same rendering engine programmatically when you need more control
@@ -45,11 +45,12 @@ uv tool install deckfile
 
 ### Optional extras
 
-| Extra     | Install                           | What it adds                   |
-| --------- | --------------------------------- | ------------------------------ |
-| `svg`     | `pip install "deckfile[svg]"`     | SVG logo support via CairoSVG  |
-| `gsheets` | `pip install "deckfile[gsheets]"` | Google Sheets as a data source |
-| `all`     | `pip install "deckfile[all]"`     | Everything above               |
+| Extra       | Install                             | What it adds                   |
+| ----------- | ----------------------------------- | ------------------------------ |
+| `svg`       | `pip install "deckfile[svg]"`       | SVG logo support via CairoSVG  |
+| `gsheets`   | `pip install "deckfile[gsheets]"`   | Google Sheets as a data source |
+| `snowflake` | `pip install "deckfile[snowflake]"` | Snowflake as a data source     |
+| `all`       | `pip install "deckfile[all]"`       | Everything above               |
 
 ### SVG logo support (macOS)
 
@@ -185,7 +186,7 @@ defaults:
 
 ### Sources
 
-Four source types are available:
+Five source types are available:
 
 #### File: local CSV
 
@@ -228,6 +229,63 @@ GOOGLE_AUTH_EMAIL=...
 GOOGLE_AUTH_CLIENT_ID=...
 ```
 
+#### Snowflake
+
+Requires the `snowflake` extra and credentials via environment variables. The `query` field is the SQL executed against the warehouse — the result becomes the source's data.
+
+```yaml
+sources:
+  revenue:
+    type: snowflake
+    query: |
+      SELECT month, mrr
+      FROM analytics.revenue_monthly
+      ORDER BY month
+
+    # Optional per-source overrides (otherwise read from env):
+    warehouse: COMPUTE_WH
+    database: ANALYTICS
+    schema: PUBLIC
+    role: ANALYST
+```
+
+Required environment variables (set in `.env`):
+
+```bash
+SNOWFLAKE_ACCOUNT=myorg-myaccount
+SNOWFLAKE_USER=...
+```
+
+Plus **one** of the two auth modes:
+
+**Password auth:**
+
+```bash
+SNOWFLAKE_PASSWORD=...
+```
+
+**Key-pair auth** (preferred for production / CI). The PEM key may be stored on a single line — literal `\n` sequences are converted to real newlines at load time:
+
+```bash
+SNOWFLAKE_PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBA...qv6+ys7A==\n-----END RSA PRIVATE KEY-----"
+SNOWFLAKE_PRIVATE_KEY_PASSPHRASE=...   # optional, only for encrypted keys
+```
+
+If both `SNOWFLAKE_PRIVATE_KEY` and `SNOWFLAKE_PASSWORD` are set, key-pair auth wins.
+
+Optional environment variables (used as defaults; YAML keys override):
+
+```bash
+SNOWFLAKE_WAREHOUSE=COMPUTE_WH
+SNOWFLAKE_DATABASE=ANALYTICS
+SNOWFLAKE_SCHEMA=PUBLIC
+SNOWFLAKE_ROLE=ANALYST
+```
+
+> Snowflake uppercases unquoted identifiers, so `SELECT mrr` returns a column named `MRR`. Reference that exact name in your chart's `columns:` block, or alias with quoted identifiers (`SELECT mrr AS "mrr"`) to preserve case.
+
+Unlike other source types, the `query` field on a Snowflake source is the fetch itself, not a post-fetch DuckDB pass. To layer additional SQL on Snowflake results, use a `type: dep` source that `ref()`s the Snowflake source.
+
 #### Dependent: SQL transformation over other sources
 
 Use DuckDB SQL to join, aggregate, or reshape data from other sources. Reference upstream sources with `ref()`.
@@ -252,7 +310,7 @@ Dependencies are resolved automatically via topological sort. Circular reference
 
 #### Inline SQL on any source
 
-Any source type can include an optional `query` field to run SQL against the loaded data. The raw data is exposed as a table called `source`:
+Any `file`, `url`, or `gsheet` source can include an optional `query` field to run DuckDB SQL against the loaded data. The raw data is exposed as a table called `source`:
 
 ```yaml
 sources:
@@ -262,6 +320,8 @@ sources:
     query: |
       SELECT * FROM source WHERE region = 'US'
 ```
+
+> Snowflake sources are an exception: their `query` field is the SQL run against the warehouse, not a post-fetch DuckDB pass.
 
 ## Chart Types
 
@@ -685,11 +745,12 @@ Every `deck build` automatically archives the output to `output/.archive/<timest
 
 **Optional:**
 
-| Package     | Version | Extra     | Purpose                     |
-| ----------- | ------- | --------- | --------------------------- |
-| cairosvg    | >= 2.7  | `svg`     | SVG logo rendering          |
-| gspread     | >= 6.0  | `gsheets` | Google Sheets API           |
-| google-auth | >= 2.0  | `gsheets` | Google service account auth |
+| Package                     | Version | Extra       | Purpose                     |
+| --------------------------- | ------- | ----------- | --------------------------- |
+| cairosvg                    | >= 2.7  | `svg`       | SVG logo rendering          |
+| gspread                     | >= 6.0  | `gsheets`   | Google Sheets API           |
+| google-auth                 | >= 2.0  | `gsheets`   | Google service account auth |
+| snowflake-connector-python  | >= 3.0  | `snowflake` | Snowflake warehouse driver  |
 
 ## License
 

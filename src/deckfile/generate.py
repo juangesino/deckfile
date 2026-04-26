@@ -80,8 +80,21 @@ def _fetch_raw(source: dict) -> str:
             return fetch_gsheet_csv(url, range=source.get("range"), timeout=timeout)
         except Exception as e:
             raise ValueError(f"Failed to fetch Google Sheet ({url}): {e}") from e
+    elif src_type == "snowflake":
+        query = source.get("query")
+        if not query:
+            raise ValueError("Snowflake source requires a 'query' key.")
+        try:
+            from .snowflake import run_snowflake_query
+
+            return run_snowflake_query(query, source)
+        except Exception as e:
+            raise ValueError(f"Failed to run Snowflake query: {e}") from e
     else:
-        raise ValueError(f"Unknown source type: '{src_type}'. Use 'url', 'file', or 'gsheet'.")
+        raise ValueError(
+            f"Unknown source type: '{src_type}'. "
+            "Use 'url', 'file', 'gsheet', or 'snowflake'."
+        )
 
 
 def load_data(source: dict, *, source_cache: Dict[str, List[dict]] | None = None,
@@ -101,8 +114,10 @@ def load_data(source: dict, *, source_cache: Dict[str, List[dict]] | None = None
 
     raw = _fetch_raw(source)
 
+    # For snowflake, `query` is the fetch SQL — already executed by _fetch_raw.
+    # For other types, `query` runs DuckDB on the fetched CSV.
     query = source.get("query")
-    if query:
+    if query and source.get("type") != "snowflake":
         from .query import run_query
 
         return run_query(raw, query)
@@ -201,7 +216,7 @@ def _resolve_dep_sources(named_sources: dict) -> Dict[str, List[dict]]:
         if name not in raw_cache:
             spec = named_sources[name]
             raw = _fetch_raw(spec)
-            if spec.get("query"):
+            if spec.get("query") and spec.get("type") != "snowflake":
                 from .query import run_query
                 raw_cache[name] = _rows_to_csv(run_query(raw, spec["query"]))
             else:
