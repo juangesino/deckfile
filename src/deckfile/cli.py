@@ -65,7 +65,7 @@ def cmd_build(args: argparse.Namespace) -> None:
 
     config_path = find_config(args.config)
     load_dotenv(Path(config_path).resolve().parent / ".env")
-    select = args.select or None
+    select = [c for group in args.select for c in group] if args.select else None
     build_all(config_path, select=select)
 
 
@@ -106,6 +106,7 @@ def main(argv: list[str] | None = None) -> None:
     build_parser.add_argument(
         "-s", "--select",
         nargs="+",
+        action="append",
         metavar="CHART",
         help="Build only the specified chart(s)",
     )
