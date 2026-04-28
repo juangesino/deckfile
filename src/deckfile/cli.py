@@ -59,9 +59,12 @@ def cmd_init(args: argparse.Namespace) -> None:
 
 
 def cmd_build(args: argparse.Namespace) -> None:
+    from dotenv import load_dotenv
+
     from .generate import build_all
 
     config_path = find_config(args.config)
+    load_dotenv(Path(config_path).resolve().parent / ".env")
     select = args.select or None
     build_all(config_path, select=select)
 
@@ -74,10 +77,6 @@ def cmd_list(args: argparse.Namespace) -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
-    from dotenv import load_dotenv
-
-    load_dotenv()
-
     parser = argparse.ArgumentParser(
         prog="deck",
         description="Generate investor-quality charts from YAML definitions.",
