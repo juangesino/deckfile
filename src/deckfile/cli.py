@@ -77,9 +77,16 @@ def cmd_list(args: argparse.Namespace) -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
+    from importlib.metadata import version
+
     parser = argparse.ArgumentParser(
         prog="deck",
         description="Generate investor-quality charts from YAML definitions.",
+    )
+    parser.add_argument(
+        "-V", "--version",
+        action="version",
+        version=f"deck {version('deckfile')}",
     )
     subparsers = parser.add_subparsers(dest="command")
 
