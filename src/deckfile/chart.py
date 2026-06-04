@@ -80,8 +80,15 @@ class Chart:
         width: Optional[float] = None,
         label: Optional[str] = None,
         zorder: int = 3,
+        corner_radius: Optional[float] = None,
     ) -> Chart:
-        """Add a bar series."""
+        """Add a bar series.
+
+        Args:
+            corner_radius: Round the top corners. Fraction of the bar's
+                half-width (0 = square, 1 = semicircular cap). Defaults to the
+                theme's ``bar_corner_radius``.
+        """
         self._series.append(BarSeries(
             x=np.asarray(x, dtype=float),
             y=np.asarray(y, dtype=float),
@@ -90,6 +97,7 @@ class Chart:
             width=width,
             label=label,
             zorder=zorder,
+            corner_radius=corner_radius,
         ))
         return self
 
@@ -101,6 +109,7 @@ class Chart:
         colors: Optional[dict[str, str]] = None,
         alphas: Optional[dict[str, float]] = None,
         width: Optional[float] = None,
+        corner_radius: Optional[float] = None,
     ) -> Chart:
         """Add a stacked bar group.
 
@@ -109,6 +118,10 @@ class Chart:
             layers: Ordered dict of {label: values}. Bottom-to-top stacking.
             colors: Optional per-label color overrides.
             alphas: Optional per-label alpha overrides.
+            corner_radius: Round the top corners of each stack. Fraction of the
+                bar's half-width (0 = square, 1 = semicircular cap). Only the
+                topmost non-zero segment in each column is rounded. Defaults to
+                the theme's ``bar_corner_radius``.
         """
         self._series.append(StackedBarGroup(
             x=np.asarray(x, dtype=float),
@@ -116,6 +129,7 @@ class Chart:
             colors=colors or {},
             alphas=alphas or {},
             width=width,
+            corner_radius=corner_radius,
         ))
         return self
 

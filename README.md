@@ -337,7 +337,14 @@ params:
   alpha: 0.7 # transparency
   width: 0.65 # bar width
   label: "Revenue" # legend label
+  corner_radius: 0.35 # round the top corners (0 = square, 1 = semicircular cap)
 ```
+
+`corner_radius` is a fraction of the bar's half-width: `0` (the default) keeps
+square tops, `1` makes the radius equal to half the bar width (a semicircular
+cap when the bar is tall enough). Corners stay visually circular regardless of
+the chart's aspect ratio. Set the default for every chart with the
+`bar_corner_radius` theme option.
 
 ### Line
 
@@ -370,6 +377,7 @@ columns:
     "Product C": "product_c_col"
 params:
   width: 0.65
+  corner_radius: 0.35 # round the top of each stack (0 = square)
   colors:
     "Product A": "#3a58ed"
     "Product B": "#10b981"
@@ -377,6 +385,10 @@ params:
   alphas:
     "Product A": 0.85
 ```
+
+`corner_radius` rounds the top corners of the whole stack (only the silhouette,
+not every layer boundary), so the stack reads as a single bar. See the
+[Bar](#bar) section for the value's meaning.
 
 ### Stacked Area
 
@@ -617,12 +629,13 @@ defaults:
 
 ### Bars
 
-| Parameter          | Default | Description             |
-| ------------------ | ------- | ----------------------- |
-| `bar_width`        | `0.55`  | Bar width fraction      |
-| `bar_alpha`        | `0.7`   | Bar transparency        |
-| `subtle_bar_width` | `0.45`  | Subtle bar width        |
-| `subtle_bar_alpha` | `0.12`  | Subtle bar transparency |
+| Parameter            | Default | Description                                     |
+| -------------------- | ------- | ----------------------------------------------- |
+| `bar_width`          | `0.55`  | Bar width fraction                              |
+| `bar_alpha`          | `0.7`   | Bar transparency                                |
+| `bar_corner_radius`  | `0.0`   | Rounded bar tops (fraction of half-width, 0–1)  |
+| `subtle_bar_width`   | `0.45`  | Subtle bar width                                |
+| `subtle_bar_alpha`   | `0.12`  | Subtle bar transparency                         |
 
 ### Endpoints
 

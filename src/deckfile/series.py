@@ -15,6 +15,7 @@ class BarSeries:
     width: Optional[float] = None
     label: Optional[str] = None
     zorder: int = 3
+    corner_radius: Optional[float] = None
 
 
 @dataclass
@@ -24,6 +25,7 @@ class StackedBarGroup:
     colors: dict[str, str] = field(default_factory=dict)
     alphas: dict[str, float] = field(default_factory=dict)
     width: Optional[float] = None
+    corner_radius: Optional[float] = None
 
 
 @dataclass

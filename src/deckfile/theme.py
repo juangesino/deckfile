@@ -78,6 +78,9 @@ class Theme:
     # ── Bar styling ──
     bar_width: float = 0.55
     bar_alpha: float = 0.7
+    # Rounded bar corners. Fraction of the bar's half-width used as the corner
+    # radius (0 = square, 1 = semicircular cap). Applies to bar / stacked_bar.
+    bar_corner_radius: float = 0.0
     subtle_bar_width: float = 0.45
     subtle_bar_alpha: float = 0.12
 
