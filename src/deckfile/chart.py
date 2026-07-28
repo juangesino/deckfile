@@ -330,7 +330,12 @@ class Chart:
             halo: Draw halo circle on the last point.
             offset: Text offset from point in points.
             series_index: Apply only to Nth series (0-based), or all if None.
-            layer: Target a specific layer in stacked groups.
+            layer: Target a specific layer in stacked groups. On a stacked bar
+                this labels that band's own value, centered inside the band
+                (without it, the column totals are labeled — always 100 on a
+                normalized stack). On a stacked area it moves the endpoint onto
+                that layer's boundary line. A name that matches no layer in a
+                group annotates nothing for that group.
         """
         self._annotations.append(AnnotationRequest(
             kind="endpoints",
