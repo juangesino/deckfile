@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from .rounded import apply_rounded_top_clip
+from .stacking import normalize_layers
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
@@ -57,10 +58,17 @@ def render_stacked_bar(
 ) -> None:
     width = group.width or theme.bar_width
     radius = group.corner_radius if group.corner_radius is not None else theme.bar_corner_radius
+    layer_names = list(group.layers.keys())
+    layer_values = [np.asarray(group.layers[k], dtype=float) for k in layer_names]
+
+    if group.normalize:
+        layer_values = normalize_layers(layer_values)
+
     bottom = np.zeros(len(group.x), dtype=float)
 
     containers = []
-    for i, (label, values) in enumerate(group.layers.items()):
+    for i, label in enumerate(layer_names):
+        values = layer_values[i]
         color = group.colors.get(label, theme.palette[(palette_index + i) % len(theme.palette)])
         alpha = group.alphas.get(label, 0.85 if i == 0 else 0.7)
 

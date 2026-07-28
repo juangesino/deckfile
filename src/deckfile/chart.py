@@ -110,6 +110,7 @@ class Chart:
         alphas: Optional[dict[str, float]] = None,
         width: Optional[float] = None,
         corner_radius: Optional[float] = None,
+        normalize: bool = False,
     ) -> Chart:
         """Add a stacked bar group.
 
@@ -122,6 +123,7 @@ class Chart:
                 bar's half-width (0 = square, 1 = semicircular cap). Only the
                 topmost non-zero segment in each column is rounded. Defaults to
                 the theme's ``bar_corner_radius``.
+            normalize: Normalize to 100% stacked.
         """
         self._series.append(StackedBarGroup(
             x=np.asarray(x, dtype=float),
@@ -130,6 +132,7 @@ class Chart:
             alphas=alphas or {},
             width=width,
             corner_radius=corner_radius,
+            normalize=normalize,
         ))
         return self
 

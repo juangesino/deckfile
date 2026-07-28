@@ -390,6 +390,7 @@ columns:
 params:
   width: 0.65
   corner_radius: 0.35 # round the top of each stack (0 = square)
+  normalize: false # normalize to 100% stacked
   colors:
     "Product A": "#3a58ed"
     "Product B": "#10b981"
@@ -401,6 +402,11 @@ params:
 `corner_radius` rounds the top corners of the whole stack (only the silhouette,
 not every layer boundary), so the stack reads as a single bar. See the
 [Bar](#bar) section for the value's meaning.
+
+`normalize: true` rescales every column so its layers sum to 100, turning the
+chart into a share-of-total view. Values land on a 0–100 scale, so pair it with
+`y_format: "%"` (and optionally `y_lim: [0, 100]`). Columns whose layers all sum
+to zero stay empty rather than blowing up.
 
 ### Stacked Area
 

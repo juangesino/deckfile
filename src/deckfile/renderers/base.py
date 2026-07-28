@@ -17,6 +17,7 @@ from .bar import render_bar_series, render_stacked_bar
 from .combo import render_combo
 from .line import render_line_series
 from .projection import render_projection
+from .stacking import normalize_layers
 
 if TYPE_CHECKING:
     from ..chart import Chart
@@ -105,10 +106,10 @@ def build_figure(chart: Chart) -> tuple:
                 if isinstance(series, (BarSeries, LineSeries)):
                     render_endpoints(ax, series, ann, theme, palette_index=pi)
                 elif isinstance(series, StackedBarGroup):
-                    totals = np.sum(
-                        [np.asarray(v, dtype=float) for v in series.layers.values()],
-                        axis=0,
-                    )
+                    layer_values = [np.asarray(v, dtype=float) for v in series.layers.values()]
+                    if series.normalize:
+                        layer_values = normalize_layers(layer_values)
+                    totals = np.sum(layer_values, axis=0)
                     proxy = BarSeries(
                         x=series.x,
                         y=totals,
@@ -119,9 +120,7 @@ def build_figure(chart: Chart) -> tuple:
                     layer_names = list(series.layers.keys())
                     layer_values = [np.asarray(series.layers[k], dtype=float) for k in layer_names]
                     if series.normalize:
-                        totals = np.sum(layer_values, axis=0)
-                        totals = np.where(totals == 0, 1, totals)
-                        layer_values = [(v / totals) * 100 for v in layer_values]
+                        layer_values = normalize_layers(layer_values)
                     # Cumulative tops per layer
                     cumulative = np.zeros(len(series.x), dtype=float)
                     layer_tops = {}
