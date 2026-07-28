@@ -9,7 +9,12 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import numpy as np
 
-from ..annotations import render_endpoints, render_point_annotation, render_separators
+from ..annotations import (
+    render_bar_layer_labels,
+    render_endpoints,
+    render_point_annotation,
+    render_separators,
+)
 from ..formatters import get_formatter
 from ..series import BarSeries, ComboGroup, LineSeries, ProjectionScenario, StackedAreaGroup, StackedBarGroup
 from .area import render_stacked_area
@@ -106,16 +111,33 @@ def build_figure(chart: Chart) -> tuple:
                 if isinstance(series, (BarSeries, LineSeries)):
                     render_endpoints(ax, series, ann, theme, palette_index=pi)
                 elif isinstance(series, StackedBarGroup):
-                    layer_values = [np.asarray(v, dtype=float) for v in series.layers.values()]
+                    layer_names = list(series.layers.keys())
+                    layer_values = [np.asarray(series.layers[k], dtype=float) for k in layer_names]
                     if series.normalize:
                         layer_values = normalize_layers(layer_values)
-                    totals = np.sum(layer_values, axis=0)
-                    proxy = BarSeries(
-                        x=series.x,
-                        y=totals,
-                        color=theme.brand,
-                    )
-                    render_endpoints(ax, proxy, ann, theme, palette_index=pi)
+
+                    if ann.layer is not None:
+                        # Target a single band: label its own value, not the
+                        # column total (which on a normalized stack is always 100).
+                        if ann.layer not in layer_names:
+                            continue
+                        li = layer_names.index(ann.layer)
+                        bottoms = np.sum(layer_values[:li], axis=0) if li else np.zeros(len(series.x))
+                        color = series.colors.get(
+                            ann.layer,
+                            theme.palette[(pi + li) % len(theme.palette)],
+                        )
+                        render_bar_layer_labels(
+                            ax, series.x, bottoms, layer_values[li], ann, theme, color=color,
+                        )
+                    else:
+                        totals = np.sum(layer_values, axis=0)
+                        proxy = BarSeries(
+                            x=series.x,
+                            y=totals,
+                            color=theme.brand,
+                        )
+                        render_endpoints(ax, proxy, ann, theme, palette_index=pi)
                 elif isinstance(series, StackedAreaGroup):
                     layer_names = list(series.layers.keys())
                     layer_values = [np.asarray(series.layers[k], dtype=float) for k in layer_names]
@@ -127,8 +149,10 @@ def build_figure(chart: Chart) -> tuple:
                     for li, name in enumerate(layer_names):
                         cumulative = cumulative + layer_values[li]
                         layer_tops[name] = cumulative.copy()
-                    # Annotate specific layer or top of stack
-                    if ann.layer and ann.layer in layer_tops:
+                    # Annotate specific layer boundary, or top of stack
+                    if ann.layer is not None:
+                        if ann.layer not in layer_tops:
+                            continue
                         target_name = ann.layer
                         li = layer_names.index(target_name)
                     else:

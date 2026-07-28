@@ -408,6 +408,21 @@ chart into a share-of-total view. Values land on a 0–100 scale, so pair it wit
 `y_format: "%"` (and optionally `y_lim: [0, 100]`). Columns whose layers all sum
 to zero stay empty rather than blowing up.
 
+By default `annotations.endpoints` labels the column **totals**, which on a
+normalized stack is just `100` in every column. Point it at one band with
+`layer:` to label that band's own value, drawn centered inside the band:
+
+```yaml
+annotations:
+  endpoints:
+    which: all
+    format: "{value:.0f}%"
+    layer: "Product A"
+```
+
+A `layer:` that doesn't match any layer in the group annotates nothing (rather
+than silently falling back to the totals).
+
 ### Stacked Area
 
 ```yaml
@@ -422,6 +437,11 @@ params:
   markers: true # show markers at data points (default: true)
   normalize: false # normalize to 100% stacked
 ```
+
+`annotations.endpoints` labels the top of the stack by default; `layer:` moves
+the dot and label onto that layer's boundary line and labels the cumulative
+value there (a boundary is a cumulative position, unlike a stacked *bar* band,
+where `layer:` labels the band's own value).
 
 ### Projection
 

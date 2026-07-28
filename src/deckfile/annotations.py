@@ -11,6 +11,34 @@ if TYPE_CHECKING:
     from .theme import Theme
 
 
+def select_indices(which: str, n: int) -> list[int]:
+    """Resolve an endpoint selector ("first_last", "last", ...) to indices."""
+    if n == 0:
+        return []
+    if which == "last":
+        return [n - 1]
+    if which == "first":
+        return [0]
+    if which == "all":
+        return list(range(n))
+    # "first_last" and anything unrecognized
+    return [0, n - 1] if n > 1 else [0]
+
+
+def format_value(annotation: AnnotationRequest, value: float) -> str:
+    """Format a value with the annotation's formatter / format string."""
+    val = float(value)
+    if annotation.formatter:
+        return annotation.formatter(val)
+    if annotation.format:
+        return annotation.format.format(
+            value=val,
+            value_k=val / 1000,
+            value_m=val / 1_000_000,
+        )
+    return f"{val:,.0f}"
+
+
 def render_endpoints(
     ax: Axes,
     series: BarSeries | LineSeries,
@@ -28,16 +56,7 @@ def render_endpoints(
     if n == 0:
         return
 
-    if annotation.which == "first_last":
-        indices = [0, n - 1] if n > 1 else [0]
-    elif annotation.which == "last":
-        indices = [n - 1]
-    elif annotation.which == "first":
-        indices = [0]
-    elif annotation.which == "all":
-        indices = list(range(n))
-    else:
-        indices = [0, n - 1] if n > 1 else [0]
+    indices = select_indices(annotation.which, n)
 
     for i in indices:
         # Scatter dot
@@ -62,17 +81,7 @@ def render_endpoints(
             )
 
         # Value label
-        if annotation.formatter:
-            label_text = annotation.formatter(float(y_data[i]))
-        elif annotation.format:
-            val = float(y_data[i])
-            label_text = annotation.format.format(
-                value=val,
-                value_k=val / 1000,
-                value_m=val / 1_000_000,
-            )
-        else:
-            label_text = f"{y_data[i]:,.0f}"
+        label_text = format_value(annotation, y_data[i])
 
         ax.annotate(
             label_text,
@@ -84,6 +93,50 @@ def render_endpoints(
             color=color,
             ha="center",
             va="bottom",
+        )
+
+
+def render_bar_layer_labels(
+    ax: Axes,
+    x: np.ndarray,
+    bottoms: np.ndarray,
+    values: np.ndarray,
+    annotation: AnnotationRequest,
+    theme: Theme,
+    *,
+    color: str,
+) -> None:
+    """Label one band of a stacked bar with its own value, centered in the band.
+
+    Unlike line/area endpoints, a bar band is a solid rectangle: the number that
+    matters is the band's own height, not the cumulative top (which on a
+    normalized stack is just 100 in every column).
+    """
+    x_data = np.asarray(x, dtype=float)
+    bottoms = np.asarray(bottoms, dtype=float)
+    values = np.asarray(values, dtype=float)
+
+    for i in select_indices(annotation.which, len(x_data)):
+        val = float(values[i])
+        if not np.isfinite(val) or val <= 0:
+            continue
+
+        ax.text(
+            x_data[i],
+            bottoms[i] + val / 2,
+            format_value(annotation, val),
+            fontsize=theme.annotation_size - 1,
+            fontweight=theme.annotation_weight,
+            color=color,
+            ha="center",
+            va="center",
+            zorder=8,
+            bbox=dict(
+                boxstyle="round,pad=0.15",
+                facecolor=theme.bg_color,
+                edgecolor="none",
+                alpha=0.8,
+            ),
         )
 
 
