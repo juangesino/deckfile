@@ -171,7 +171,7 @@ charts: # Chart definitions
 
 ```yaml
 defaults:
-  output_dir: "./output" # where to save charts
+  output_dir: "./output" # where to save charts (default: "./output")
   figsize: [16, 8.5] # default [width, height] in inches
   theme:
     brand: "#3a58ed" # any theme parameter (see Theme section)
@@ -183,6 +183,18 @@ defaults:
     footer:
       text: "Company Inc. · Confidential"
 ```
+
+A relative `output_dir` is resolved **relative to the deckfile**, not to your
+current directory, so `deck build path/to/deckfile.yaml` writes to the same
+place wherever you run it from. Absolute paths and `~` are used as given.
+
+Each build clears previously rendered charts from `output_dir` before writing.
+Only image files it could have produced (`.png`, `.jpg`, `.svg`, `.pdf`, …) are
+removed — subdirectories, dotfiles, and anything else in the folder are left
+alone, and `.archive/` is preserved. Sources are loaded *before* anything is
+deleted, so a build that fails on a bad source leaves the previous charts in
+place. Pointing `output_dir` at a directory containing `.git`, at your home
+directory, or at the filesystem root is refused outright.
 
 ### Sources
 
@@ -378,6 +390,7 @@ columns:
 params:
   width: 0.65
   corner_radius: 0.35 # round the top of each stack (0 = square)
+  normalize: false # normalize to 100% stacked
   colors:
     "Product A": "#3a58ed"
     "Product B": "#10b981"
@@ -389,6 +402,11 @@ params:
 `corner_radius` rounds the top corners of the whole stack (only the silhouette,
 not every layer boundary), so the stack reads as a single bar. See the
 [Bar](#bar) section for the value's meaning.
+
+`normalize: true` rescales every column so its layers sum to 100, turning the
+chart into a share-of-total view. Values land on a 0–100 scale, so pair it with
+`y_format: "%"` (and optionally `y_lim: [0, 100]`). Columns whose layers all sum
+to zero stay empty rather than blowing up.
 
 ### Stacked Area
 

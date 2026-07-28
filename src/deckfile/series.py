@@ -26,6 +26,7 @@ class StackedBarGroup:
     alphas: dict[str, float] = field(default_factory=dict)
     width: Optional[float] = None
     corner_radius: Optional[float] = None
+    normalize: bool = False  # True → 100% stacked (each column sums to 100)
 
 
 @dataclass

@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from ..interpolation import smooth_curve
+from .stacking import normalize_layers
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
@@ -26,9 +27,7 @@ def render_stacked_area(
 
     # Normalize to 100% if requested
     if group.normalize:
-        totals = np.sum(layer_values, axis=0)
-        totals = np.where(totals == 0, 1, totals)  # avoid division by zero
-        layer_values = [(v / totals) * 100 for v in layer_values]
+        layer_values = normalize_layers(layer_values)
 
     # Build cumulative sums (bottom-up)
     cumulative = np.zeros(len(x), dtype=float)

@@ -32,6 +32,15 @@ _LINESTYLE_MAP = {
 }
 
 
+# ── Output-directory safety ─────────────────────────────────────────────────
+# The build cleans its output directory between runs. It only ever removes
+# files it could plausibly have rendered itself — never directories, dotfiles,
+# or anything else that happens to live there.
+_RENDER_SUFFIXES = frozenset({
+    ".png", ".jpg", ".jpeg", ".svg", ".pdf", ".webp", ".eps",
+})
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Data loading
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -506,7 +515,7 @@ def resolve_defaults(config: dict):
     else:
         branding = Branding.none()
 
-    output_dir = defaults.get("output_dir", ".")
+    output_dir = defaults.get("output_dir", "./output")
     figsize_list = defaults.get("figsize")
     default_figsize = tuple(figsize_list) if figsize_list else None
 
@@ -538,7 +547,7 @@ def build_chart(
 
     # 1. Resolve source and load data
     src_ref = chart_spec["source"]
-    source_name = src_ref if isinstance(src_ref, str) else None
+    source_name = src_ref if isinstance(src_ref, str) else f"__inline__{chart_name}"
     source = resolve_source(src_ref, named_sources)
     rows = load_data(source, source_cache=source_cache, source_name=source_name)
 
@@ -721,8 +730,89 @@ def load_config(yaml_path: str) -> dict:
         return yaml.safe_load(f)
 
 
+def _resolve_output_dir(output_dir: str, yaml_path: str) -> str:
+    """Resolve output_dir relative to the deckfile, not the current directory.
+
+    A relative ``output_dir`` means "next to the deckfile", so ``deck build
+    path/to/deckfile.yaml`` writes to the same place no matter where it is
+    invoked from. Absolute paths and ``~`` are honoured as given.
+    """
+    path = Path(output_dir).expanduser()
+    if path.is_absolute():
+        return str(path)
+    return str(Path(yaml_path).expanduser().resolve().parent / path)
+
+
+def _assert_safe_output_dir(output_path: Path) -> None:
+    """Refuse to treat a source tree or a home/root directory as build output.
+
+    The build empties its output directory, so pointing it at something that
+    isn't a build directory would destroy real work.
+    """
+    resolved = output_path.resolve()
+
+    if (resolved / ".git").exists():
+        raise ValueError(
+            f"Refusing to use '{resolved}' as output_dir: it contains a .git "
+            f"directory, so it looks like a source repository rather than a "
+            f"build output directory. The build empties this directory on "
+            f"every run. Set defaults.output_dir to a dedicated folder."
+        )
+
+    if resolved == Path.home().resolve():
+        raise ValueError(
+            f"Refusing to use the home directory '{resolved}' as output_dir. "
+            f"Set defaults.output_dir to a dedicated folder."
+        )
+
+    if resolved.parent == resolved:
+        raise ValueError(
+            f"Refusing to use the filesystem root '{resolved}' as output_dir. "
+            f"Set defaults.output_dir to a dedicated folder."
+        )
+
+
+def _clean_output_dir(output_path: Path) -> None:
+    """Remove previously rendered charts, leaving everything else untouched.
+
+    Only top-level files with a known render suffix are removed, so stale
+    charts from earlier builds go away while directories, dotfiles, and any
+    unrelated content in the folder survive.
+    """
+    if not output_path.exists():
+        return
+
+    for item in output_path.iterdir():
+        if item.name == ".archive" or item.is_dir():
+            continue
+        if item.suffix.lower() in _RENDER_SUFFIXES:
+            item.unlink()
+
+
+def _preflight_load(charts: dict, named_sources: dict,
+                    source_cache: Dict[str, List[dict]]) -> None:
+    """Load and validate every chart's data before anything is deleted.
+
+    Cleaning the output directory is destructive, so a build that is going to
+    fail on a bad source or a missing file must fail *before* that happens.
+    Rows loaded here are cached and reused by the real build.
+    """
+    for chart_name, chart_spec in charts.items():
+        if "source" not in chart_spec:
+            raise ValueError(f"Chart '{chart_name}': missing required key 'source'")
+        if "type" not in chart_spec:
+            raise ValueError(f"Chart '{chart_name}': missing required key 'type'")
+
+        src_ref = chart_spec["source"]
+        name = src_ref if isinstance(src_ref, str) else f"__inline__{chart_name}"
+        if name in source_cache:
+            continue
+        source = resolve_source(src_ref, named_sources)
+        source_cache[name] = load_data(source)
+
+
 def _archive_build(output_dir: str):
-    """Copy all files in output_dir (except .archive/) into a timestamped archive folder."""
+    """Copy rendered charts in output_dir into a timestamped archive folder."""
     output_path = Path(output_dir)
     archive_dir = output_path / ".archive"
     build_id = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -730,13 +820,11 @@ def _archive_build(output_dir: str):
     build_dir.mkdir(parents=True, exist_ok=True)
 
     for item in output_path.iterdir():
-        if item.name == ".archive":
+        if item.name == ".archive" or item.is_dir():
             continue
-        dest = build_dir / item.name
-        if item.is_dir():
-            shutil.copytree(item, dest)
-        else:
-            shutil.copy2(item, dest)
+        if item.suffix.lower() not in _RENDER_SUFFIXES:
+            continue
+        shutil.copy2(item, build_dir / item.name)
 
     print(f"  Archived to {build_dir}/")
 
@@ -747,6 +835,7 @@ def build_all(yaml_path: str, select: Optional[list[str]] = None):
 
     config = load_config(yaml_path)
     theme, branding, output_dir, default_figsize = resolve_defaults(config)
+    output_dir = _resolve_output_dir(output_dir, yaml_path)
     named_sources = config.get("sources", {})
     source_cache = _resolve_dep_sources(named_sources)
     charts = config.get("charts", {})
@@ -764,16 +853,14 @@ def build_all(yaml_path: str, select: Optional[list[str]] = None):
             return
         charts = {k: v for k, v in charts.items() if k in select}
 
-    # Clean output directory (preserve .archive/)
+    # Load every source before touching the output directory, so a build that
+    # is going to fail does not delete the previous build's charts first.
+    _preflight_load(charts, named_sources, source_cache)
+
+    # Clean previously rendered charts (preserve .archive/ and everything else)
     output_path = Path(output_dir)
-    if output_path.exists():
-        for item in output_path.iterdir():
-            if item.name == ".archive":
-                continue
-            if item.is_dir():
-                shutil.rmtree(item)
-            else:
-                item.unlink()
+    _assert_safe_output_dir(output_path)
+    _clean_output_dir(output_path)
 
     print(f"Building {len(charts)} chart(s)...\n")
 
