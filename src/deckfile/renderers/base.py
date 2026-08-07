@@ -11,9 +11,11 @@ import numpy as np
 
 from ..annotations import (
     render_bar_layer_labels,
+    render_change,
     render_endpoints,
     render_point_annotation,
     render_separators,
+    render_x_groups,
 )
 from ..formatters import get_formatter
 from ..series import BarSeries, ComboGroup, LineSeries, ProjectionScenario, StackedAreaGroup, StackedBarGroup
@@ -167,6 +169,9 @@ def build_figure(chart: Chart) -> tuple:
         elif ann.kind == "point":
             render_point_annotation(ax, ann, theme)
 
+    # 6b. Change brackets
+    change_x = _render_changes(ax, chart, theme)
+
     # 7. X-axis labels
     if chart._x_labels:
         x_positions = np.arange(len(chart._x_labels))
@@ -185,6 +190,11 @@ def build_figure(chart: Chart) -> tuple:
     if chart._y_locator_step:
         ax.yaxis.set_major_locator(mticker.MultipleLocator(chart._y_locator_step))
 
+    # Drop the tick numbers but keep the ticks themselves, so the grid lines
+    # (and anything positioned against them) are unchanged.
+    if getattr(chart, "_y_hidden", False):
+        ax.tick_params(axis="y", labelleft=False)
+
     # 8b. Right y-axis formatting (combo charts)
     ax2 = chart._ax2
     if ax2 is not None:
@@ -199,6 +209,8 @@ def build_figure(chart: Chart) -> tuple:
             ax2.yaxis.set_major_formatter(get_formatter(chart._y_format_right))
         if chart._y_locator_step_right:
             ax2.yaxis.set_major_locator(mticker.MultipleLocator(chart._y_locator_step_right))
+        if getattr(chart, "_y_hidden_right", False):
+            ax2.tick_params(axis="y", labelright=False)
 
     # 8c. Axis labels
     if chart._y_axis_label:
@@ -218,7 +230,7 @@ def build_figure(chart: Chart) -> tuple:
     if chart._x_lim:
         ax.set_xlim(*chart._x_lim)
     else:
-        _auto_xlim(ax, chart._series)
+        _auto_xlim(ax, chart._series, extra_x=change_x)
 
     # 9b. Right y-axis limits
     if ax2 is not None:
@@ -281,10 +293,130 @@ def build_figure(chart: Chart) -> tuple:
         bottom=theme.margin_bottom,
     )
 
+    # 14. X-axis group labels — last, because they are positioned by measuring
+    # the rendered tick labels, which needs the final limits and layout.
+    render_x_groups(ax, chart._x_groups, theme)
+
     return fig, ax
 
 
-def _auto_xlim(ax, series_list):
+def _series_xy(series, theme, layer=None):
+    """Resolve a series to (x, y, axis, bar_half_width) for change lookups.
+
+    ``layer`` names a stacked layer, a projection scenario, or a combo item;
+    without it a stacked group resolves to its column totals. Returns None when
+    the series has no series matching ``layer``.
+    """
+    if isinstance(series, BarSeries):
+        half = (series.width or theme.bar_width) / 2
+        return series.x, series.y, "left", half
+    if isinstance(series, LineSeries):
+        return series.x, series.y, "left", 0.0
+    if isinstance(series, (StackedBarGroup, StackedAreaGroup)):
+        names = list(series.layers.keys())
+        values = [np.asarray(series.layers[k], dtype=float) for k in names]
+        if series.normalize:
+            values = normalize_layers(values)
+        if layer is not None:
+            if layer not in names:
+                return None
+            y = values[names.index(layer)]
+        else:
+            y = np.sum(values, axis=0)
+        half = 0.0
+        if isinstance(series, StackedBarGroup):
+            half = (series.width or theme.bar_width) / 2
+        return series.x, y, "left", half
+    if isinstance(series, ComboGroup):
+        for item in series.items:
+            if layer is None or item.label == layer:
+                half = theme.bar_width / 2 if item.series_type == "bar" else 0.0
+                return series.x, np.asarray(item.values, dtype=float), item.axis, half
+        return None
+    if isinstance(series, ProjectionScenario):
+        if layer is not None:
+            if layer not in series.scenarios:
+                return None
+            return series.x_projected, np.asarray(series.scenarios[layer], dtype=float), "left", 0.0
+        return series.x_historical, series.y_historical, "left", 0.0
+    return None
+
+
+def _resolve_x(x_arr, x):
+    """Resolve a change endpoint: negative integers index back from the end."""
+    x = float(x)
+    if x < 0 and float(x).is_integer() and len(x_arr) >= abs(int(x)):
+        return float(x_arr[int(x)])
+    return x
+
+
+def _value_at(x_arr, y_arr, x):
+    """Value of a series at an x position — exact match, else interpolated."""
+    exact = np.flatnonzero(np.isclose(x_arr, x))
+    if exact.size:
+        return float(y_arr[exact[0]])
+    order = np.argsort(x_arr)
+    return float(np.interp(x, np.asarray(x_arr)[order], np.asarray(y_arr)[order]))
+
+
+def _render_changes(ax, chart, theme):
+    """Render every change bracket; return the x positions of their arrows."""
+    if not chart._changes:
+        return []
+
+    arrow_positions = []
+    for change in chart._changes:
+        target = None
+        if change.series_index is not None:
+            if change.series_index < len(chart._series):
+                target = _series_xy(
+                    chart._series[change.series_index], theme, change.layer
+                )
+        else:
+            for series in chart._series:
+                target = _series_xy(series, theme, change.layer)
+                if target is not None:
+                    break
+
+        if target is None:
+            # Nothing to measure — unless both values were given outright.
+            if change.from_value is None or change.to_value is None:
+                continue
+            x_arr, y_arr, axis_name, half = np.asarray([]), np.asarray([]), "left", 0.0
+        else:
+            x_arr, y_arr, axis_name, half = target
+
+        from_x = _resolve_x(x_arr, change.from_x)
+        to_x = _resolve_x(x_arr, change.to_x)
+
+        from_value = change.from_value
+        to_value = change.to_value
+        if len(x_arr):
+            if from_value is None:
+                from_value = _value_at(x_arr, y_arr, from_x)
+            if to_value is None:
+                to_value = _value_at(x_arr, y_arr, to_x)
+        if from_value is None or to_value is None:
+            continue
+
+        arrow_x = change.at if change.at is not None else max(from_x, to_x) + change.gap
+        arrow_positions.append(arrow_x)
+
+        target_ax = chart._ax2 if (axis_name == "right" and chart._ax2 is not None) else ax
+        render_change(
+            target_ax, change, theme,
+            from_x=from_x,
+            to_x=to_x,
+            from_value=float(from_value),
+            to_value=float(to_value),
+            arrow_x=arrow_x,
+            bar_half_width=half,
+        )
+
+    return arrow_positions
+
+
+def _auto_xlim(ax, series_list, extra_x=None):
     """Compute sensible x-axis limits from all series data."""
     all_x = []
     for s in series_list:
@@ -298,8 +430,18 @@ def _auto_xlim(ax, series_list):
             all_x.extend(s.x_historical.tolist())
             all_x.extend(s.x_projected.tolist())
 
-    if all_x:
-        ax.set_xlim(min(all_x) - 0.6, max(all_x) + 0.4)
+    if not all_x:
+        return
+
+    left, right = min(all_x) - 0.6, max(all_x) + 0.4
+
+    # Keep anything drawn outside the data range (a change bracket sitting past
+    # the last bar) inside the frame, without padding it as generously.
+    if extra_x:
+        left = min(left, min(extra_x) - 0.2)
+        right = max(right, max(extra_x) + 0.2)
+
+    ax.set_xlim(left, right)
 
 
 def _build_legend(ax, chart, theme):

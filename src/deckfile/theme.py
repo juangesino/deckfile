@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, asdict
+from typing import Optional
 
 
 @dataclass(frozen=True)
@@ -96,6 +97,67 @@ class Theme:
     # ── Separator ──
     separator_linewidth: float = 0.7
     separator_alpha: float = 0.6
+
+    # ── X-axis group labels (the second tier under the tick labels) ──
+    x_group_label_size: Optional[float] = None  # None → tick_label_size
+    x_group_label_color: Optional[str] = None  # None → subtle_text
+    x_group_label_weight: str = "normal"
+    x_group_rule_color: Optional[str] = None  # None → separator
+    x_group_rule_linewidth: float = 0.9
+    x_group_rule_alpha: float = 1.0
+    # Fraction of a tick band trimmed off each end of the rule, so neighbouring
+    # groups read as separate brackets.
+    x_group_rule_inset: float = 0.15
+    # Vertical spacing in points: rule below the tick labels, label below the rule.
+    x_group_rule_pad: float = 10.0
+    x_group_label_gap: float = 7.0
+
+    # ── Change bracket (period-over-period delta) ──
+    # Master styling. Guides, arrow, and label inherit from these unless the
+    # more specific parameter below is set (None everywhere means "inherit").
+    change_color: str = "#1a1a2e"
+    change_linewidth: float = 1.2
+    change_linestyle: str = "solid"
+    change_alpha: float = 1.0
+    change_zorder: float = 9.0
+
+    # Guides — the horizontal lines drawn at each value.
+    change_guide_color: Optional[str] = None
+    change_guide_linewidth: Optional[float] = None
+    change_guide_linestyle: Optional[str] = None
+    change_guide_alpha: Optional[float] = None
+    change_guide_capstyle: str = "butt"
+    # How far the guides run past the arrow, in x-data units.
+    change_guide_overhang: float = 0.06
+
+    # Arrow — the span between the two values.
+    change_arrow_color: Optional[str] = None
+    change_arrow_linewidth: Optional[float] = None
+    change_arrow_linestyle: Optional[str] = None
+    change_arrow_alpha: Optional[float] = None
+    change_arrow_style: str = "double"
+    change_arrow_scale: float = 20.0
+    change_arrow_head_width: Optional[float] = None
+    change_arrow_head_length: Optional[float] = None
+
+    # Label
+    change_label_size: float = 11.0
+    change_label_weight: str = "bold"
+    change_label_style: str = "normal"
+    change_label_family: Optional[str] = None
+    change_label_color: Optional[str] = None
+    change_label_alpha: Optional[float] = None
+    change_label_rotation: float = 0.0
+
+    # Label box
+    change_box_style: str = "square"
+    change_box_pad: float = 0.5
+    change_box_rounding: Optional[float] = None
+    change_box_facecolor: Optional[str] = None  # None → the chart background
+    change_box_edgecolor: Optional[str] = None  # None → the label color
+    change_box_linewidth: Optional[float] = None
+    change_box_linestyle: Optional[str] = None
+    change_box_alpha: Optional[float] = None
 
     # ── Legend ──
     legend_fontsize: float = 10.5
