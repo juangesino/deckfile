@@ -4,14 +4,15 @@
 
 <p align="center">
   Generate high-quality charts from YAML.<br>
-  Define data sources, transformations, and chart specs in a single <code>deckfile.yaml</code>, then run <code>deck build</code>.
+  Declare data sources, transformations, and chart specs, then run <code>deck build</code>.
 </p>
 
 <p align="center">
   <a href="#installation">Installation</a> &middot;
   <a href="#quick-start">Quick Start</a> &middot;
   <a href="#cli-reference">CLI Reference</a> &middot;
-  <a href="#configuration">Configuration</a> &middot;
+  <a href="#project-layout">Project Layout</a> &middot;
+  <a href="#composition">Composition</a> &middot;
   <a href="#chart-types">Chart Types</a> &middot;
   <a href="#python-api">Python API</a>
 </p>
@@ -22,10 +23,12 @@
 
 **deckfile** is a dbt-inspired tool for chart generation. Instead of writing Python scripts for every chart, you declare what you want in YAML and let deckfile handle the rendering.
 
-- **YAML-first**: one config file defines all your charts
+- **YAML-first**: declare charts instead of scripting them
 - **SQL transforms**: reshape data with DuckDB queries, reference upstream sources with `ref()`
 - **Multiple data sources**: local CSV files, remote URLs, Google Sheets, Snowflake, and derived SQL views
 - **Automatic dependency resolution**: sources that depend on other sources are resolved via topological sort
+- **Composable**: split charts across files, keep SQL in `.sql` models, and share config with presets, `extends`, and vars
+- **Graph-aware selection**: build one chart, a tagged group, a directory, or everything downstream of a model
 - **Publication-ready output**: high-DPI PNGs with customizable themes, branding, and annotations
 - **Fluent Python API**: use the same rendering engine programmatically when you need more control
 
@@ -81,7 +84,10 @@ This creates:
 
 ```
 my-project/
-  deckfile.yaml          # chart definitions
+  deckfile.yaml          # project settings: paths, vars, defaults, theme
+  charts/
+    revenue.yml          # chart and preset definitions
+  models/                # SQL models (one .sql file per source)
   data/
     sample.csv           # sample data
   output/                # generated charts go here
@@ -90,12 +96,17 @@ my-project/
   .gitignore
 ```
 
+`charts/` and `models/` are discovered automatically. Everything can equally
+live in a single `deckfile.yaml` — see [Project Layout](#project-layout).
+
 ### Build charts
 
 ```bash
 deck build               # build all charts
 deck build -s my_chart   # build a specific chart
+deck build -s tag:revenue # build every chart carrying a tag
 deck list                # list all defined charts
+deck compile             # print the fully-resolved config
 ```
 
 ### Minimal deckfile.yaml
@@ -132,39 +143,64 @@ charts:
 deck build
 ```
 
+A single file stays the right shape for a small deck. When one grows past a few
+dozen charts, [Project Layout](#project-layout) and [Composition](#composition)
+cover splitting it up — and `deck split` does the mechanical part for you.
+
 ## CLI Reference
 
 ```
 deck init [directory]                  Scaffold a new deckfile project
-deck build [config] [-s CHART ...]     Build charts (default config: deckfile.yaml)
-deck list [config]                     List all defined charts
+deck build [config] [-s SELECTOR ...]  Build charts (default config: deckfile.yaml)
+deck list [config] [-s SELECTOR ...]   List defined charts
 deck ls [config]                       Alias for list
+deck compile [config] [-o PATH]        Print the fully-resolved config
+deck split [config] [-o DIR]           Migrate a single file into models/ + charts/
+deck docs                              Print this documentation
 ```
 
-| Flag                               | Description                          |
-| ---------------------------------- | ------------------------------------ |
-| `-s`, `--select CHART [CHART ...]` | Build only the specified chart(s)    |
-| `--debug`                          | Show full Python traceback on errors |
+| Flag                                  | Description                                     |
+| ------------------------------------- | ----------------------------------------------- |
+| `-s`, `--select SELECTOR [SELECTOR …]` | Limit to matching charts (see [Selecting Charts](#selecting-charts)) |
+| `--var NAME=VALUE`                    | Override a project var; repeatable              |
+| `-o`, `--output PATH`                 | `compile`/`split` destination                   |
+| `--force`                             | `split` only: overwrite an existing split       |
+| `--debug`                             | Show full Python traceback on errors            |
+
+Without an explicit config path, `deck` searches the current directory and its
+parents for `deckfile.yaml`, so commands work from anywhere inside a project.
+
+`deck list` prints each chart's name, type, title, and tags, followed by a count
+of any [abstract templates](#extends), which are defined but never rendered.
 
 **Examples:**
 
 ```bash
-deck init                         # scaffold in current directory
-deck init my-charts               # scaffold in ./my-charts/
-deck build                        # build all charts from deckfile.yaml
-deck build custom.yaml            # use a different config file
-deck build -s chart_a -s chart_b  # build specific charts
-deck list                         # list all charts with type and title
+deck init                              # scaffold in current directory
+deck build                             # build all charts
+deck build custom.yaml                 # use a different config file
+deck build -s chart_a -s chart_b       # build specific charts
+deck build -s 'segment_country_*'      # build a family by glob
+deck build -s tag:quarterly            # build everything tagged quarterly
+deck build -s live+                    # build everything downstream of a model
+deck build --var as_of="Jul 2026"      # override a var for one run
+deck compile -o target/manifest.yaml   # write the resolved config to a file
 ```
 
 ## Configuration
 
-A `deckfile.yaml` has three top-level sections:
+A `deckfile.yaml` has these top-level sections, all optional:
 
 ```yaml
 defaults: # Global settings (theme, branding, output, figsize)
+vars: # Values interpolated as {{ var('name') }}
 sources: # Named data sources
+presets: # Reusable blocks of chart config
 charts: # Chart definitions
+
+model_paths: # Where to find .sql models (default: ["models"] if present)
+chart_paths: # Where to find chart .yml files (default: ["charts"] if present)
+default_model_type: # Source type for .sql files without ref() (default: snowflake)
 ```
 
 ### Defaults
@@ -208,6 +244,12 @@ sources:
     type: file
     path: "data/revenue.csv"
 ```
+
+A relative `path` is resolved **relative to the deckfile**, matching
+`output_dir`, so a project builds the same way from any working directory. If
+nothing is found there, the path is tried as given, so projects that relied on
+paths relative to the current directory keep working. Absolute paths and `~`
+are used as given.
 
 #### URL: remote CSV
 
@@ -334,6 +376,253 @@ sources:
 ```
 
 > Snowflake sources are an exception: their `query` field is the SQL run against the warehouse, not a post-fetch DuckDB pass.
+
+## Project Layout
+
+A deckfile can be one file or many. Small projects are fine as a single
+`deckfile.yaml`; past a few dozen charts, splitting pays off.
+
+```
+deckfile.yaml            project settings only
+models/
+  core/live.sql          a source — its name is the filename stem
+  segments/country.sql
+charts/
+  segments/country.yml   charts:, presets:, and sources: blocks
+  quarterly/growth.yml
+```
+
+Every `*.yml` under the chart paths and every `*.sql` under the model paths is
+discovered recursively and merged into **one shared namespace**. Names must be
+unique across the whole project — a collision is an error naming both files,
+never a silent last-one-wins.
+
+Chart files may define `charts:`, `presets:`, and `sources:`. Project-level
+settings (`defaults`, `vars`, paths) belong in `deckfile.yaml`; putting them in
+a chart file is an error.
+
+Nothing here is required. A project with no `models/` or `charts/` directory
+behaves exactly as it did before. To opt out explicitly, set `chart_paths: []`.
+
+### SQL models
+
+A `.sql` file under `models/` becomes a source named after the file:
+
+```sql
+-- models/live_monthly.sql
+-- Live revenue by month, one row per account.
+select date_trunc('month', d) as month, sum(mrr) as mrr
+from accounts
+group by 1
+```
+
+```sql
+-- models/growth.sql
+select * from ref(live_monthly) order by month
+```
+
+The type is inferred from the SQL: a query containing `ref()` is a `dep` model
+composed from other sources; anything else uses `default_model_type`
+(`snowflake` by default). To override, or to attach connection settings, add a
+`sources:` entry with the same name:
+
+```yaml
+sources:
+  live_monthly:
+    warehouse: "BIG_WH"
+    role: "ANALYST"
+```
+
+The `.sql` file supplies the query and the YAML entry supplies everything else.
+Defining `query` in both places is an error.
+
+Only the models a build actually needs are executed, so `deck build -s one_chart`
+in a project with fifty models runs just that chart's upstream chain.
+
+## Composition
+
+Charts repeat each other far more than they differ. Three mechanisms let the
+shared parts be written once.
+
+### Presets
+
+A preset is a named block of chart config that any chart can pull in:
+
+```yaml
+presets:
+  monthly_timeseries:
+    x_labels:
+      mode: auto_date
+    separators:
+      auto: true
+      trigger: "Jan"
+    transform:
+      sort: true
+
+charts:
+  monthly_revenue:
+    preset: monthly_timeseries
+    title: "Monthly Revenue"
+    source: live_monthly
+    type: bar
+```
+
+`preset:` takes one name or a list; later presets win over earlier ones, and
+the chart's own keys win over all of them. Presets may themselves use
+`extends:` to build on other presets.
+
+### Extends
+
+`extends:` inherits another chart's entire spec, so a variant states only what
+differs:
+
+```yaml
+charts:
+  # An abstract chart is a template. It is never rendered and never listed,
+  # but it can be extended.
+  _segment_bar:
+    abstract: true
+    type: bar
+    annotations:
+      endpoints:
+        which: all
+
+  segment_country_revenue:
+    extends: _segment_bar
+    title: "Revenue by Country"
+    source: country_segmentation
+    columns:
+      y: LIVE_RUNRATE
+    y_format:
+      style: "$K"
+      step: 200
+
+  # Same chart, shown as a percentage.
+  segment_country_revenue_pct:
+    extends: segment_country_revenue
+    title: "Revenue Share by Country"
+    y_format:
+      style: "pct"
+```
+
+Resolution order, later winning:
+
+1. the fully-resolved chart named by `extends`
+2. the chart's `preset` blocks, in order
+3. the chart's own keys
+
+### Merge rules
+
+| Case                | Behaviour                                             |
+| ------------------- | ----------------------------------------------------- |
+| Nested mappings     | Merge recursively — override `y_format.step` alone     |
+| Lists               | Replace wholesale (palettes, positions)                |
+| `tags`              | Union, so a preset and a chart can each contribute     |
+| Explicit `null`     | Deletes the inherited key                              |
+
+To drop something a parent set:
+
+```yaml
+charts:
+  unbounded:
+    extends: capped_chart
+    y_lim: null # remove the inherited limit
+```
+
+Inheritance cycles are detected and reported with the full chain.
+
+### Vars
+
+Values that repeat across many charts — a reporting period, a cutoff date —
+belong in `vars:`:
+
+```yaml
+vars:
+  as_of: "Jun 2026"
+  period: "Q1 2024 - Q2 2026"
+  cutoff: "2024-01-01"
+```
+
+```yaml
+charts:
+  quarterly_revenue:
+    subtitle: "Live revenue run-rate · {{ var('period') }}"
+```
+
+```sql
+-- models/live_monthly.sql
+select * from accounts where d >= '{{ var('cutoff') }}'
+```
+
+Vars interpolate into chart specs, presets, and model SQL. A reference with no
+matching var is an error; give a fallback with `{{ var('name', 'default') }}`.
+Override for a single run with `--var name=value`.
+
+A string that is *entirely* one reference keeps the var's type, so
+`top: "{{ var('cap') }}"` with `cap: 1000` yields the number. Single-brace
+format strings like `'{value:,.0f}'` are left untouched.
+
+## Selecting Charts
+
+`-s` accepts these forms, on both `build` and `list`. Multiple selectors union,
+and one that matches nothing is an error.
+
+| Selector                | Matches                                             |
+| ----------------------- | --------------------------------------------------- |
+| `monthly_revenue`       | One chart by name                                    |
+| `segment_country_*`     | Every chart matching the glob                        |
+| `tag:segments`          | Every chart carrying that tag                        |
+| `path:charts/segments`  | Every chart defined in that file or directory        |
+| `live+`                 | Every chart downstream of that model, through `ref()` |
+
+Tag charts with `tags:`, which accumulates through `extends` and presets:
+
+```yaml
+charts:
+  quarterly_revenue:
+    tags: [quarterly, revenue]
+```
+
+`live+` walks the `ref()` graph: after editing `models/live.sql`, it rebuilds
+exactly the charts that depend on it, directly or transitively.
+
+For `path:`, the extension is optional — `path:charts/quarterly` matches both
+a `quarterly/` directory and a `quarterly.yml` file.
+
+## Inspecting and Migrating
+
+### deck compile
+
+`deck compile` prints the fully-resolved project — discovery, SQL models,
+presets, `extends`, and vars all applied — which is exactly what the renderer
+sees. Use it to check what a merge actually produced:
+
+```bash
+deck compile                          # print to stdout
+deck compile -o target/manifest.yaml  # write to a file
+```
+
+### deck split
+
+`deck split` migrates a single-file deckfile into the multi-file layout:
+
+```bash
+deck split
+```
+
+It writes each source query to `models/<name>.sql` (moving any `description`
+into a header comment), groups charts into `charts/<prefix>.yml` files by name
+prefix — subdividing a group that grows past a dozen charts — and reduces
+`deckfile.yaml` to project settings. The original is kept as
+`deckfile.yaml.bak`.
+
+It deliberately does **not** invent presets or `extends` relationships; deciding
+which charts are variants of which is a judgement call. Run it first, then
+factor by hand with the duplication now visible file by file.
+
+YAML structural comments are not carried across, since the file is re-emitted
+from parsed data. Comments inside SQL survive. Verify with `deck compile` and
+`deck build` afterwards.
 
 ## Chart Types
 
@@ -511,6 +800,12 @@ chart_name:
   subtitle: "Description text"
   source: source_name # reference a named source
   type: line # bar | line | stacked_bar | stacked_area | projection | combo
+
+  # ── Composition (see the Composition section) ──
+  extends: other_chart # inherit another chart's full spec
+  preset: monthly_timeseries # apply preset block(s); one name or a list
+  abstract: true # a template: never rendered, only extended
+  tags: [quarterly, revenue] # for `deck build -s tag:quarterly`
 
   columns:
     x_date: "date_column" # x-axis column (date-like)

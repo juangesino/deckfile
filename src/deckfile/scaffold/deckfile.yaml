@@ -1,8 +1,15 @@
 # ═══════════════════════════════════════════════════════════════════════════════
-# deckfile.yaml — chart definitions
+# deckfile.yaml — project settings
+#
+# Charts live in charts/*.yml and SQL models in models/*.sql; both directories
+# are discovered automatically. Keep this file for settings that apply to the
+# whole project.
+#
 # Generate all charts:  deck build
 # Build a single chart: deck build -s my_chart
+# Build a group:        deck build -s tag:revenue
 # List all charts:      deck list
+# Inspect the merge:    deck compile
 # ═══════════════════════════════════════════════════════════════════════════════
 
 defaults:
@@ -11,27 +18,14 @@ defaults:
   theme:
     brand: "#3a58ed"
 
-# ── Data sources ──────────────────────────────────────────────────────────────
+# Values interpolated into charts and models as {{ var('name') }}. Editing the
+# period in one place beats editing it in every subtitle.
+vars:
+  period: "Jan - Jun"
 
+# Sources that are locations rather than queries. Anything under models/ is
+# picked up automatically and does not need an entry here.
 sources:
   sample:
     type: file
     path: "data/sample.csv"
-
-# ── Charts ────────────────────────────────────────────────────────────────────
-
-charts:
-  monthly_revenue:
-    title: "Monthly Revenue"
-    subtitle: "Sample chart — edit me!"
-    source: sample
-    type: bar
-    columns:
-      x: "month"
-      y: "revenue"
-    x_labels:
-      mode: column
-      column: "month"
-    y_format:
-      style: "$K"
-      step: 10

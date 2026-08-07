@@ -1,0 +1,33 @@
+# Charts in this directory are discovered automatically. Add more .yml files
+# here — one per topic — and every chart shares a single namespace.
+
+# A preset is a block of chart config any chart can pull in by name. Define
+# repeated shapes once here instead of restating them per chart.
+presets:
+  labelled_bars:
+    type: bar
+    annotations:
+      endpoints:
+        which: all
+    x_labels:
+      mode: column
+      column: "month"
+
+charts:
+  monthly_revenue:
+    preset: labelled_bars
+    title: "Monthly Revenue"
+    subtitle: "Sample chart · {{ var('period') }}"
+    source: sample
+    tags: [revenue]
+    columns:
+      y: "revenue"
+    y_format:
+      style: "$K"
+      step: 10
+
+  # `extends` inherits everything above and changes only what differs.
+  monthly_revenue_tall:
+    extends: monthly_revenue
+    subtitle: "Same data, taller canvas · {{ var('period') }}"
+    figsize: [16, 11]
