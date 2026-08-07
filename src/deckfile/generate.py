@@ -46,6 +46,22 @@ def resolve_source(source_spec, named_sources: dict) -> dict:
     return source_spec
 
 
+def _resolve_source_path(source: dict) -> str:
+    """Resolve a ``file`` source path relative to the project.
+
+    A relative path means "next to the deckfile", so a project builds the same
+    way from any working directory.  Paths that only resolve against the
+    current directory still work, which keeps pre-existing projects building.
+    """
+    path = source["path"]
+    root = source.get("_root")
+    if root and not os.path.isabs(os.path.expanduser(path)):
+        candidate = Path(root) / path
+        if candidate.exists():
+            return str(candidate)
+    return path
+
+
 def _fetch_raw(source: dict) -> str:
     """Fetch raw CSV text from a URL, local file, or Google Sheet."""
     import urllib.error
@@ -65,7 +81,7 @@ def _fetch_raw(source: dict) -> str:
         except urllib.error.URLError as e:
             raise ValueError(f"Cannot reach URL: {path} ({e.reason})") from e
     elif src_type == "file":
-        path = source["path"]
+        path = _resolve_source_path(source)
         try:
             with open(path) as f:
                 return f.read()
@@ -194,16 +210,52 @@ def _topo_sort_sources(named_sources: dict) -> list[str]:
     return order
 
 
-def _resolve_dep_sources(named_sources: dict) -> Dict[str, List[dict]]:
-    """Pre-resolve all dep sources in dependency order.
+def _needed_sources(charts: dict, named_sources: dict) -> set[str]:
+    """Every source the given charts depend on, directly or through ref().
 
-    Returns a cache mapping source_name -> rows for every dep source.
+    Building one chart in a project with fifty models should not execute the
+    other forty-nine.
+    """
+    from .query import parse_refs
+
+    needed: set[str] = set()
+    queue = [
+        spec["source"]
+        for spec in charts.values()
+        if isinstance(spec.get("source"), str)
+    ]
+
+    while queue:
+        name = queue.pop()
+        if name in needed or name not in named_sources:
+            continue
+        needed.add(name)
+        spec = named_sources[name]
+        if isinstance(spec, dict) and spec.get("type") == "dep":
+            queue.extend(parse_refs(spec.get("query") or ""))
+
+    return needed
+
+
+def _resolve_dep_sources(
+    named_sources: dict,
+    needed: Optional[set[str]] = None,
+) -> Dict[str, List[dict]]:
+    """Pre-resolve dep sources in dependency order.
+
+    Returns a cache mapping source_name -> rows for every dep source that is
+    actually required.  The dependency graph is always validated in full, so a
+    broken ref() elsewhere in the project still fails the build; only
+    *execution* is narrowed to *needed*.
+
     Non-dep sources referenced by dep sources are loaded and cached
     internally to avoid redundant fetches.
     """
     from .query import parse_refs, run_dep_query
 
     order = _topo_sort_sources(named_sources)
+    if needed is not None:
+        order = [name for name in order if name in needed]
     if not order:
         return {}
 
@@ -854,6 +906,24 @@ def load_config(yaml_path: str) -> dict:
         return yaml.safe_load(f)
 
 
+def _describe_project(project) -> None:
+    """Summarize what the project pulled in, when it spans multiple files."""
+    files = {p.resolve() for p in project.chart_files.values()}
+    files |= {p.resolve() for p in project.source_files.values()}
+    files.discard(project.path.resolve())
+
+    if not files:
+        return
+
+    sql_count = sum(1 for p in project.source_files.values() if p.suffix == ".sql")
+    parts = [f"{len(files)} file(s)"]
+    if sql_count:
+        parts.append(f"{sql_count} SQL model(s)")
+    if project.presets:
+        parts.append(f"{len(project.presets)} preset(s)")
+    print(f"  Discovered {', '.join(parts)}")
+
+
 def _resolve_output_dir(output_dir: str, yaml_path: str) -> str:
     """Resolve output_dir relative to the deckfile, not the current directory.
 
@@ -953,16 +1023,24 @@ def _archive_build(output_dir: str):
     print(f"  Archived to {build_dir}/")
 
 
-def build_all(yaml_path: str, select: Optional[list[str]] = None):
-    """Load YAML config and generate charts."""
+def build_all(
+    yaml_path: str,
+    select: Optional[list[str]] = None,
+    cli_vars: Optional[Dict[str, Any]] = None,
+):
+    """Load a project and generate its charts."""
+    from .project import load_project
+    from .selectors import select_charts
+
     print(f"Loading {yaml_path}")
 
-    config = load_config(yaml_path)
-    theme, branding, output_dir, default_figsize = resolve_defaults(config)
+    project = load_project(yaml_path, cli_vars=cli_vars)
+    _describe_project(project)
+
+    theme, branding, output_dir, default_figsize = resolve_defaults(project.as_config())
     output_dir = _resolve_output_dir(output_dir, yaml_path)
-    named_sources = config.get("sources", {})
-    source_cache = _resolve_dep_sources(named_sources)
-    charts = config.get("charts", {})
+    named_sources = project.sources
+    charts = project.charts
 
     if not charts:
         print("No charts defined.")
@@ -970,12 +1048,13 @@ def build_all(yaml_path: str, select: Optional[list[str]] = None):
 
     # Filter to selected charts if specified
     if select:
-        unknown = [s for s in select if s not in charts]
-        if unknown:
-            print(f"Unknown chart(s): {', '.join(unknown)}")
-            print(f"Available: {', '.join(charts.keys())}")
-            return
-        charts = {k: v for k, v in charts.items() if k in select}
+        selected = select_charts(select, project)
+        charts = {k: v for k, v in charts.items() if k in selected}
+
+    # Only the selected charts' sources need resolving, so building one chart
+    # in a large project does not execute every unrelated model.
+    needed = _needed_sources(charts, named_sources)
+    source_cache = _resolve_dep_sources(named_sources, needed=needed)
 
     # Load every source before touching the output directory, so a build that
     # is going to fail does not delete the previous build's charts first.
@@ -1005,16 +1084,73 @@ def build_all(yaml_path: str, select: Optional[list[str]] = None):
     print(f"\nDone. {len(charts)} chart(s) written to {output_dir}/")
 
 
-def list_charts(yaml_path: str):
-    """List all charts defined in the config."""
-    config = load_config(yaml_path)
-    charts = config.get("charts", {})
+def list_charts(
+    yaml_path: str,
+    select: Optional[list[str]] = None,
+    cli_vars: Optional[Dict[str, Any]] = None,
+):
+    """List the charts a project defines, with their tags and source file."""
+    from .project import abstract_names, load_project
+    from .selectors import select_charts
+
+    project = load_project(yaml_path, cli_vars=cli_vars)
+    charts = project.charts
+
+    if select:
+        selected = select_charts(select, project)
+        charts = {k: v for k, v in charts.items() if k in selected}
 
     if not charts:
         print("No charts defined.")
         return
 
+    name_width = max(len(n) for n in charts)
+    type_width = max(len(str(s.get("type", "?"))) for s in charts.values())
+
     for name, spec in charts.items():
-        chart_type = spec.get("type", "?")
+        chart_type = str(spec.get("type", "?"))
         title = spec.get("title", "")
-        print(f"  {name}  ({chart_type})  {title}")
+        tags = spec.get("tags") or []
+        if isinstance(tags, str):
+            tags = [tags]
+        suffix = f"  [{', '.join(tags)}]" if tags else ""
+        print(f"  {name:<{name_width}}  {chart_type:<{type_width}}  {title}{suffix}")
+
+    templates = abstract_names(project)
+    if templates and not select:
+        print(f"\n  {len(templates)} abstract template(s): {', '.join(templates)}")
+
+
+def compile_project(
+    yaml_path: str,
+    output: Optional[str] = None,
+    cli_vars: Optional[Dict[str, Any]] = None,
+):
+    """Write the fully-resolved project as a single flat config.
+
+    Everything the composition layer does — file discovery, SQL models,
+    presets, extends, vars — is applied, so the result is exactly what the
+    renderer sees.  Useful for checking what a merge actually produced, and as
+    a way back to a single-file deckfile.
+    """
+    from .project import load_project
+
+    project = load_project(yaml_path, cli_vars=cli_vars)
+
+    config = project.as_config()
+    for spec in config.get("sources", {}).values():
+        if isinstance(spec, dict):
+            spec.pop("_root", None)
+
+    text = yaml.safe_dump(config, sort_keys=False, width=100, allow_unicode=True)
+
+    if output:
+        out_path = Path(output)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(text)
+        print(
+            f"Compiled {len(project.charts)} chart(s) and "
+            f"{len(project.sources)} source(s) -> {out_path}"
+        )
+    else:
+        print(text, end="")
