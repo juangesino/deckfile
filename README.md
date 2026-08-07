@@ -30,6 +30,7 @@
 - **Composable**: split charts across files, keep SQL in `.sql` models, and share config with presets, `extends`, and vars
 - **Graph-aware selection**: build one chart, a tagged group, a directory, or everything downstream of a model
 - **Publication-ready output**: high-DPI PNGs with customizable themes, branding, and annotations
+- **Storytelling annotations**: endpoint labels, callouts, and change brackets that spell out the delta between two periods
 - **Fluent Python API**: use the same rendering engine programmatically when you need more control
 
 ## Installation
@@ -754,7 +755,7 @@ params:
     "Optimistic": "#10b981"
     "Conservative": "#ef4444"
   scenario_styles:
-    "Conservative": "dashed" # solid, dashed, dotted, dashdot
+    "Conservative": "dashed" # any name from the Line styles table
   fill_between: true # shaded fill between outer scenarios
   labels:
     "Base": "Base Case ($8M)" # custom legend labels
@@ -826,11 +827,15 @@ chart_name:
     column: "label_col" # for mode: column
     values: ["Q1", "Q2", "Q3"] # for mode: explicit
     fontsize: 10
+    groups: # optional second label tier (see Grouped X-Axis Labels)
+      mode: column # column | year | explicit
+      column: "year"
 
   # ── Y-axis formatting ──
   y_format:
     style: "K" # see Y-Axis Formatters table
     step: 50 # major tick interval
+    hidden: false # true hides the tick numbers (ticks and grid lines stay)
 
   # ── Axis limits ──
   y_lim: { bottom: 0, top: 500 }
@@ -852,6 +857,10 @@ chart_name:
         color: "#ef4444"
         fontweight: bold
         dot: true
+    change: # period-over-period delta bracket (see Change Brackets)
+      from: 0 # index, x position, or x-axis label
+      to: -1 # negative counts back from the end
+      format: "{percent:+.0f}%"
 
   # ── Separators ──
   separators:
@@ -885,6 +894,319 @@ chart_name:
 | `"K_raw"`  | `1.2K`         | Auto-divides raw values by 1,000     |
 | `"%"`      | `45%`          | Percentage                           |
 | `"number"` | `1,234`        | Comma-separated integer              |
+
+`y_format.hidden: true` hides the y-axis tick numbers entirely — useful when the
+shape of the chart is the message and the absolute values are noise (or
+confidential). Ticks, grid lines, `step` and `y_lim` all still apply, so the
+chart is laid out exactly as it would be with labels. `style` becomes optional
+when `hidden` is set. `y_format_right.hidden` does the same for the right axis
+of a combo chart.
+
+## Grouped X-Axis Labels
+
+`x_labels.groups` adds a second tier under the tick labels: a label spanning
+each run of ticks, with a horizontal rule bracketing it. It turns a repetitive
+axis (`Q1 '24  Q2 '24  Q3 '24 …`) into a two-level one — bare `Q1 Q2 Q3 Q4`
+ticks with the year carried underneath:
+
+```
+   Q1     Q2     Q3     Q4        Q1     Q2     Q3     Q4
+ ─────────────────────────────  ─────────────────────────────
+             2024                           2025
+```
+
+```yaml
+x_labels:
+  mode: column
+  column: "quarter_label" # "Q1", "Q2", …
+  groups:
+    column: "year" # consecutive equal values become one group
+```
+
+Runs are collapsed automatically: four rows of `2024` followed by four rows of
+`2025` produce two groups, in that order. A blank value drops that tick out of
+the tier entirely, so a partial year at the edge can be left unlabeled.
+
+### Sources for the groups
+
+| Mode       | Where the group value comes from                                    |
+| ---------- | ------------------------------------------------------------------- |
+| `column`   | A column in the data, one value per row (the default when `column` is set) |
+| `year`     | The year of `columns.x_date` — no extra column needed                |
+| `explicit` | A literal list in `values`, one entry per row                        |
+
+`explicit` also accepts spans instead of per-row values, when the grouping
+doesn't follow the data: `values: [["2024", 0, 3], ["2025", 4, 7]]`, where the
+numbers are tick indices (inclusive).
+
+### Styling
+
+Every key below is optional and falls back to the theme.
+
+```yaml
+groups:
+  column: "year"
+  fontsize: 12
+  color: "#1a1a2e"
+  weight: bold
+  rule: true # false drops the rule and keeps the label
+  rule_color: "#dde1e8"
+  rule_linewidth: 0.9
+  rule_alpha: 1.0
+  inset: 0.15 # trim each end of the rule, in tick bands
+  pad: 10 # points from the tick labels down to the rule
+  gap: 7 # points from the rule down to the label
+```
+
+The tier is positioned by measuring the rendered tick labels, so a two-line
+label (`Jan\n'25` from `mode: auto_date`) pushes it down on its own. Raise
+`pad` to open the gap further; `inset` controls how much air separates one
+group's rule from the next.
+
+Groups compose with `separators` — a vertical separator at each year boundary
+plus a labeled band underneath — though either alone usually reads cleaner.
+
+From the Python API, the same tier is one call:
+
+```python
+chart.x_labels(["Q1", "Q2", "Q3", "Q4", "Q1", "Q2"])
+chart.x_groups(["2025", "2025", "2025", "2025", "2026", "2026"])
+# …or with explicit spans:
+chart.x_groups([("2025", 0, 3), ("2026", 4, 5)], rule=False)
+```
+
+## Change Brackets
+
+A change bracket calls out the move between two periods — the "we cut this by
+75%" callout on an otherwise ordinary chart. It draws a horizontal guide at each
+value, a double-headed arrow spanning them, and a boxed label with the change:
+
+```yaml
+annotations:
+  change:
+    from: 0 # first bar
+    to: -1 # last bar
+```
+
+That's the whole minimal form. The values are read from the chart's data, the
+percent change is computed, and the arrow is placed clear of the bars — the
+x-axis widens to make room for it.
+
+`from` and `to` accept three things:
+
+| Value      | Meaning                                        |
+| ---------- | ---------------------------------------------- |
+| `0`, `3`   | An x position (index, for CSV-ordered data)    |
+| `-1`, `-2` | Counted back from the end — `-1` is the last   |
+| `"Q1 '25"` | An x-axis label, matched against `x_labels`    |
+
+Positions that fall between data points are interpolated, so `to: 2.5` is valid
+on a line chart.
+
+### Every option
+
+```yaml
+annotations:
+  change:
+    from: 0
+    to: -1
+
+    # ── What is measured ──
+    from_value: 156 # override the value read from the data
+    to_value: 37 #    (both optional)
+    series_index: 0 # read the Nth series (default: the first one)
+    layer: "Segment A" # a stacked layer, projection scenario, or combo item
+
+    # ── What the label says ──
+    mode: percent # percent | absolute | multiple
+    format: "{percent:+.0f}%" # overrides mode
+    label: "-75%" # literal text, overrides everything
+
+    # ── Where it sits ──
+    at: 5.4 # explicit x for the arrow
+    gap: 0.5 # or: distance past the rightmost point (default)
+    label_position: 0.5 # 0 = at `from`, 1 = at `to`
+    label_offset: [0, 0] # extra nudge, in points
+```
+
+Styling is a separate, much larger surface — see
+[Styling a change bracket](#styling-a-change-bracket) below.
+
+Pass a **list** to draw several brackets on one chart:
+
+```yaml
+annotations:
+  change:
+    - { from: 0, to: 2, at: 2.75 }
+    - { from: 3, to: -1, mode: absolute, format: "{delta:+,.0f} days" }
+```
+
+### Label formats
+
+`mode` picks a sensible default format; `format` overrides it with any of these
+placeholders:
+
+| Placeholder             | Meaning                          |
+| ----------------------- | -------------------------------- |
+| `{percent}`             | Percent change from `from` value |
+| `{delta}`               | Absolute difference              |
+| `{delta_k}`, `{delta_m}`| Difference in thousands/millions |
+| `{multiple}`            | `to / from`, e.g. `2.8` for 2.8x |
+| `{start}`, `{end}`      | The two raw values               |
+
+| Mode         | Default format      | Example  |
+| ------------ | ------------------- | -------- |
+| `percent`    | `{percent:+,.0f}%`  | `-75%`   |
+| `absolute`   | `{delta:+,.0f}`     | `+220`   |
+| `multiple`   | `{multiple:,.1f}x`  | `2.8x`   |
+
+When the starting value is zero, percent and multiple are undefined — both fall
+back to the absolute delta rather than printing a meaningless number.
+
+### Which series is measured
+
+By default the bracket reads the chart's first series. `series_index` picks a
+different one, and `layer` reaches inside a group:
+
+- **Stacked bar** — `layer` measures that band's own value; without it, the
+  column totals (always 100 on a normalized stack).
+- **Stacked area** — same, the layer's own value rather than the total.
+- **Combo** — `layer` names an item. If that item lives on the right axis, the
+  bracket is drawn against the right axis, so it lines up with the data.
+- **Projection** — `layer` names a scenario; without it, the historical line.
+
+A `layer` that matches nothing draws nothing, the same as `annotations.endpoints`.
+Passing both `from_value` and `to_value` skips the data lookup entirely, which is
+how you bracket against a target line or any other value not in the series.
+
+### Styling a change bracket
+
+A bracket is three elements — the **guides**, the **arrow**, and the **label**
+(with its box). Each is independently styleable, and each falls back through a
+four-step chain, most specific first:
+
+```
+change.guide_color  →  change.color  →  theme.change_guide_color  →  theme.change_color
+└─ this bracket's      └─ this            └─ every bracket's         └─ every bracket
+   guides                 bracket            guides
+```
+
+So `color: "#0d9488"` turns one bracket teal, `theme.change_color` turns every
+bracket in the deck teal, and `guide_color` overrides just the guides of the one
+bracket you put it on. The same chain applies to `linewidth`, `linestyle`, and
+`alpha`.
+
+```yaml
+annotations:
+  change:
+    from: 0
+    to: -1
+
+    # ── Master: applies to guides, arrow, and label at once ──
+    color: "#0d9488"
+    linewidth: 1.6
+    linestyle: dashed
+    alpha: 0.9
+    zorder: 9 # the label draws one step above this
+
+    # ── Guides: the horizontal lines at each value ──
+    guides: both # true | false | from | to | both | none
+    guide_color: "#94a3b8"
+    guide_linewidth: 1.0
+    guide_linestyle: densely_dashed
+    guide_alpha: 0.6
+    guide_capstyle: butt # butt | round | projecting
+    guide_overhang: 0.06 # how far they run past the arrow, in x units
+    guide_start_offset: 0.28 # where they start; default: the bar's half-width
+
+    # ── Arrow: the span between the two values ──
+    arrow: true
+    arrow_style: double # see the arrow style table
+    arrow_color: "#0d9488"
+    arrow_linewidth: 1.4
+    arrow_linestyle: solid
+    arrow_alpha: 1.0
+    arrow_scale: 20 # overall head scale
+    arrow_head_width: 0.25
+    arrow_head_length: 0.5
+
+    # ── Label ──
+    fontsize: 11
+    fontweight: bold # normal | bold | light | 100-900
+    fontstyle: italic # normal | italic | oblique
+    fontfamily: "SF Pro Display"
+    label_color: "#065f46"
+    label_alpha: 1.0
+    label_rotation: 90 # degrees
+    label_ha: center # horizontal alignment against the arrow
+    label_va: center # vertical alignment
+
+    # ── Label box ──
+    box: true
+    box_style: round # see the box style table
+    box_pad: 0.5
+    box_rounding: 0.4 # corner radius (round styles) or tooth size
+    box_facecolor: "#ecfdf5" # default: the chart background
+    box_edgecolor: "#0d9488" # default: the label color
+    box_linewidth: 1.4
+    box_linestyle: solid
+    box_alpha: 1.0
+```
+
+#### Line styles
+
+Any of these names works anywhere a `*_linestyle` is accepted, as does a raw
+matplotlib linestyle (`"--"`, `":"`) or a dash pattern like `[6, 3]` (6 on, 3
+off) — or `[0, [6, 3]]` if you need a dash offset too.
+
+| Name              | Pattern            |
+| ----------------- | ------------------ |
+| `solid`           | ────────           |
+| `dashed`          | ── ── ──           |
+| `dotted`          | · · · · ·          |
+| `dashdot`         | ─·─·─·             |
+| `loosely_dashed`  | ──   ──   ──       |
+| `densely_dashed`  | ──── ────          |
+| `loosely_dotted`  | ·    ·    ·        |
+| `densely_dotted`  | ·········          |
+| `dashdotdot`      | ──·· ──··          |
+| `none`            | invisible          |
+
+#### Arrow styles
+
+| Name            | Looks like               |
+| --------------- | ------------------------ |
+| `double`        | `<->` heads at both ends |
+| `start`         | `<-` head at `from` only |
+| `end`           | `->` head at `to` only   |
+| `double_filled` | filled heads, both ends  |
+| `start_filled`  | filled head at `from`    |
+| `end_filled`    | filled head at `to`      |
+| `bar`           | `|-|` flat caps, no head |
+| `line`          | a plain line, no heads   |
+
+Raw matplotlib arrowstyles work too, including pre-parameterized ones like
+`"->,head_width=0.4"` — supply your own parameters and `arrow_head_width` /
+`arrow_head_length` step aside. `arrow_head_width` sets the cap width on the
+`bar` style, and is ignored by `line`.
+
+> A dashed or dotted `arrow_linestyle` also dashes the arrowheads, which looks
+> ragged on the `*_filled` styles. Pair dashes with the open heads (`double`,
+> `start`, `end`) or with `bar`.
+
+#### Box styles
+
+`square` (default), `round`, `round4`, `circle`, `sawtooth`, `roundtooth`,
+`larrow`, `rarrow`, `darrow`. `box_rounding` sets the corner radius on
+`round`/`round4` and the tooth size on `sawtooth`/`roundtooth`.
+
+The box's default `box_facecolor` is the chart background — that opaque fill is
+what lets the label sit cleanly on top of the arrow. Set `box: false` for a
+label with no box at all, in which case the arrow runs behind the text.
+
+Every one of these has a `theme.change_*` counterpart, so a deck-wide bracket
+style belongs in `defaults.theme` rather than repeated on each chart. See
+[Change brackets](#change-brackets-1) in the theme reference.
 
 ## Theme
 
@@ -992,6 +1314,83 @@ defaults:
 | `separator_linewidth` | `0.7`   | Separator line width   |
 | `separator_alpha`     | `0.6`   | Separator transparency |
 
+### X-axis group labels
+
+The second label tier under the ticks (see [Grouped X-Axis Labels](#grouped-x-axis-labels)).
+
+| Parameter               | Default    | Description                                     |
+| ----------------------- | ---------- | ----------------------------------------------- |
+| `x_group_label_size`    | `None`     | Group label font size (`None` → `tick_label_size`) |
+| `x_group_label_color`   | `None`     | Group label color (`None` → `subtle_text`)      |
+| `x_group_label_weight`  | `"normal"` | Group label font weight                         |
+| `x_group_rule_color`    | `None`     | Rule color (`None` → `separator`)               |
+| `x_group_rule_linewidth`| `0.9`      | Rule line width                                 |
+| `x_group_rule_alpha`    | `1.0`      | Rule transparency                               |
+| `x_group_rule_inset`    | `0.15`     | Trim off each end of the rule, in tick bands    |
+| `x_group_rule_pad`      | `10.0`     | Points from the tick labels down to the rule    |
+| `x_group_label_gap`     | `7.0`      | Points from the rule down to the group label    |
+
+### Change brackets
+
+Master parameters — the guides, arrow, and label all inherit from these:
+
+| Parameter          | Default     | Description                          |
+| ------------------ | ----------- | ------------------------------------ |
+| `change_color`     | `"#1a1a2e"` | Color of the whole bracket           |
+| `change_linewidth` | `1.2`       | Line width of the whole bracket      |
+| `change_linestyle` | `"solid"`   | Line style of the whole bracket      |
+| `change_alpha`     | `1.0`       | Opacity of the whole bracket         |
+| `change_zorder`    | `9.0`       | Draw order; the label sits one above |
+
+Guides. `null` means "inherit the master parameter above":
+
+| Parameter                | Default  | Description                                 |
+| ------------------------ | -------- | ------------------------------------------- |
+| `change_guide_color`     | `null`   | Guide color                                 |
+| `change_guide_linewidth` | `null`   | Guide line width                            |
+| `change_guide_linestyle` | `null`   | Guide line style                            |
+| `change_guide_alpha`     | `null`   | Guide opacity                               |
+| `change_guide_capstyle`  | `"butt"` | `butt`, `round`, or `projecting`            |
+| `change_guide_overhang`  | `0.06`   | How far guides run past the arrow (x units) |
+
+Arrow:
+
+| Parameter                 | Default    | Description                        |
+| ------------------------- | ---------- | ---------------------------------- |
+| `change_arrow_color`      | `null`     | Arrow color                        |
+| `change_arrow_linewidth`  | `null`     | Arrow line width                   |
+| `change_arrow_linestyle`  | `null`     | Arrow line style                   |
+| `change_arrow_alpha`      | `null`     | Arrow opacity                      |
+| `change_arrow_style`      | `"double"` | Head style — see the table above   |
+| `change_arrow_scale`      | `20.0`     | Overall head scale                 |
+| `change_arrow_head_width` | `null`     | Head width (cap width on `bar`)    |
+| `change_arrow_head_length`| `null`     | Head length                        |
+
+Label:
+
+| Parameter               | Default    | Description                       |
+| ----------------------- | ---------- | --------------------------------- |
+| `change_label_size`     | `11.0`     | Font size                         |
+| `change_label_weight`   | `"bold"`   | Font weight                       |
+| `change_label_style`    | `"normal"` | `normal`, `italic`, or `oblique`  |
+| `change_label_family`   | `null`     | Font family                       |
+| `change_label_color`    | `null`     | Label color                       |
+| `change_label_alpha`    | `null`     | Label opacity                     |
+| `change_label_rotation` | `0.0`      | Rotation in degrees               |
+
+Label box:
+
+| Parameter               | Default    | Description                            |
+| ----------------------- | ---------- | -------------------------------------- |
+| `change_box_style`      | `"square"` | Box shape — see the table above        |
+| `change_box_pad`        | `0.5`      | Padding inside the box                 |
+| `change_box_rounding`   | `null`     | Corner radius, or tooth size           |
+| `change_box_facecolor`  | `null`     | Box fill; `null` → the chart background |
+| `change_box_edgecolor`  | `null`     | Box border; `null` → the label color   |
+| `change_box_linewidth`  | `null`     | Box border width                       |
+| `change_box_linestyle`  | `null`     | Box border style                       |
+| `change_box_alpha`      | `null`     | Box opacity                            |
+
 ### Legend
 
 | Parameter             | Default | Description                |
@@ -1062,11 +1461,13 @@ theme = Theme.default().replace(brand="#0d9488", title_size=28)
 | `.projection(x_historical, y_historical, scenarios, x_projected, ...)` | Add a projection chart                                  |
 | `.combo(x, items)`                                                     | Add a combo (dual axis) chart                           |
 | `.x_labels(labels)`                                                    | Set x-axis tick labels                                  |
-| `.y_format(style, step=...)`                                           | Configure y-axis formatting                             |
+| `.x_groups(groups, ...)`                                               | Add a second label tier spanning runs of ticks          |
+| `.y_format(style, step=..., hidden=...)`                               | Configure y-axis formatting                             |
 | `.y_lim(bottom=, top=)`                                                | Set y-axis limits                                       |
 | `.x_lim(left=, right=)`                                                | Set x-axis limits                                       |
 | `.annotate_endpoints(...)`                                             | Annotate first/last/all data points                     |
 | `.annotate_point(x, y, text, ...)`                                     | Annotate a specific point                               |
+| `.annotate_change(from_x, to_x, ...)`                                  | Bracket the change between two x positions              |
 | `.separators(positions)`                                               | Add vertical separator lines                            |
 | `.auto_separators(labels, trigger)`                                    | Auto-place separators at label boundaries               |
 | `.legend(loc=, enabled=)`                                              | Configure legend                                        |

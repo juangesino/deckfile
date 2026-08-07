@@ -20,16 +20,8 @@ import yaml
 
 from .branding import Branding
 from .chart import Chart
+from .linestyles import resolve_linestyle
 from .theme import Theme
-
-
-# ── Linestyle mapping (human-readable → matplotlib) ─────────────────────────
-_LINESTYLE_MAP = {
-    "solid": "-",
-    "dashed": (0, (8, 4)),
-    "dotted": ":",
-    "dashdot": "-.",
-}
 
 
 # ── Output-directory safety ─────────────────────────────────────────────────
@@ -398,6 +390,62 @@ def build_x_labels(rows: List[dict], columns: dict, labels_spec: dict) -> list:
     return []
 
 
+# Everything in an `x_labels.groups` block that isn't styling.
+_X_GROUP_SPEC_KEYS = {"mode", "column", "values"}
+_X_GROUP_STYLE_KEYS = {
+    "fontsize", "color", "weight", "rule", "rule_color", "rule_linewidth",
+    "rule_alpha", "inset", "pad", "gap",
+}
+
+
+def build_x_groups(rows: List[dict], columns: dict, groups_spec: dict) -> list:
+    """Resolve an `x_labels.groups` spec to one group value per row.
+
+    Consecutive equal values become one spanning label downstream, so a plain
+    year column is all a quarterly axis needs.
+    """
+    if not groups_spec:
+        return []
+
+    mode = groups_spec.get("mode")
+    if mode is None:
+        if groups_spec.get("column"):
+            mode = "column"
+        elif groups_spec.get("values"):
+            mode = "explicit"
+        else:
+            mode = "year"
+
+    if mode == "column":
+        col = groups_spec.get("column")
+        if not col:
+            raise ValueError("x_labels.groups: 'column' is required for mode 'column'")
+        if rows and col not in rows[0]:
+            available = sorted(rows[0].keys())
+            raise KeyError(
+                f"x_labels.groups column '{col}' not found in data. "
+                f"Available columns: {available}"
+            )
+        return [row[col] for row in rows]
+
+    if mode == "year":
+        x_date_col = columns.get("x_date")
+        if not x_date_col:
+            raise ValueError(
+                "x_labels.groups mode 'year' needs 'columns.x_date'. "
+                "Use mode 'column' to group by a column instead."
+            )
+        return [str(row[x_date_col])[:4] for row in rows]
+
+    if mode == "explicit":
+        return groups_spec.get("values", [])
+
+    raise ValueError(
+        f"Unknown x_labels.groups mode: '{mode}'. "
+        f"Expected one of: column, year, explicit"
+    )
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Type-specific chart builders
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -449,7 +497,7 @@ def _build_projection(chart: Chart, rows: List[dict], columns: dict, params: dic
     # Map linestyle strings to matplotlib values
     if "scenario_styles" in params:
         params["scenario_styles"] = {
-            k: _LINESTYLE_MAP.get(v, v)
+            k: resolve_linestyle(v)
             for k, v in params["scenario_styles"].items()
         }
 
@@ -488,7 +536,58 @@ def _build_combo(chart: Chart, rows: List[dict], columns: dict, params: dict, di
 # Annotations, separators, legend
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _apply_annotations(chart: Chart, ann_spec: dict):
+# YAML spells the change endpoints `from:` / `to:` — friendlier than the
+# Python API's positional names, and `from` is a keyword in Python.
+_CHANGE_ALIASES = {
+    "from": "from_x",
+    "to": "to_x",
+    "label": "text",
+}
+
+
+def _resolve_change_endpoint(value, x_labels: list, key: str, chart_name: str = ""):
+    """Resolve a change endpoint: a number, or an x-axis label to match."""
+    if not isinstance(value, str):
+        return value
+
+    if value not in (x_labels or []):
+        where = f"Chart '{chart_name}': " if chart_name else ""
+        raise ValueError(
+            f"{where}annotations.change.{key} = '{value}' does not match any "
+            f"x-axis label. Available labels: {x_labels}"
+        )
+    return x_labels.index(value)
+
+
+def _apply_changes(chart: Chart, change_spec, x_labels: list, chart_name: str = ""):
+    """Apply one or many `annotations.change` blocks."""
+    if not change_spec:
+        return
+
+    blocks = change_spec if isinstance(change_spec, list) else [change_spec]
+    for block in blocks:
+        kwargs = {_CHANGE_ALIASES.get(k, k): v for k, v in dict(block).items()}
+        for key in ("from_x", "to_x"):
+            if key in kwargs:
+                kwargs[key] = _resolve_change_endpoint(
+                    kwargs[key], x_labels, key.removesuffix("_x"), chart_name,
+                )
+        if "label_offset" in kwargs:
+            kwargs["label_offset"] = tuple(kwargs["label_offset"])
+
+        missing = [k for k in ("from_x", "to_x") if k not in kwargs]
+        if missing:
+            where = f"Chart '{chart_name}': " if chart_name else ""
+            raise ValueError(
+                f"{where}annotations.change requires "
+                f"{' and '.join(k.removesuffix('_x') for k in missing)}."
+            )
+
+        chart.annotate_change(**kwargs)
+
+
+def _apply_annotations(chart: Chart, ann_spec: dict, x_labels: Optional[list] = None,
+                       chart_name: str = ""):
     if not ann_spec:
         return
 
@@ -503,6 +602,8 @@ def _apply_annotations(chart: Chart, ann_spec: dict):
         if "offset" in pt:
             pt["offset"] = tuple(pt["offset"])
         chart.annotate_point(**pt)
+
+    _apply_changes(chart, ann_spec.get("change"), x_labels or [], chart_name)
 
 
 def _apply_separators(chart: Chart, x_labels: list, sep_spec: dict, rows: List[dict], columns: dict):
@@ -718,13 +819,32 @@ def build_chart(
             kwargs["fontsize"] = fontsize
         chart.x_labels(x_labels, **kwargs)
 
+    # 6b. X label groups — the second tier under the ticks
+    groups_spec = labels_spec.get("groups") or {}
+    if groups_spec:
+        unknown = set(groups_spec) - _X_GROUP_SPEC_KEYS - _X_GROUP_STYLE_KEYS
+        if unknown:
+            raise ValueError(
+                f"Chart '{chart_name}': unknown x_labels.groups option(s) "
+                f"{sorted(unknown)}. Expected one of: "
+                f"{sorted(_X_GROUP_SPEC_KEYS | _X_GROUP_STYLE_KEYS)}"
+            )
+        group_values = build_x_groups(rows, columns, groups_spec)
+        if group_values:
+            style = {k: v for k, v in groups_spec.items() if k in _X_GROUP_STYLE_KEYS}
+            chart.x_groups(group_values, **style)
+
     # 7. Y format
     y_fmt = chart_spec.get("y_format", {})
     if y_fmt:
         kwargs = {}
         if "step" in y_fmt:
             kwargs["step"] = y_fmt["step"]
-        chart.y_format(y_fmt["style"], **kwargs)
+        if "hidden" in y_fmt:
+            kwargs["hidden"] = y_fmt["hidden"]
+        # `style` is optional when the labels are hidden — there is nothing
+        # left to format.
+        chart.y_format(y_fmt.get("style"), **kwargs)
 
     # 7b. Right y-axis format (combo charts)
     y_fmt_right = chart_spec.get("y_format_right", {})
@@ -732,7 +852,9 @@ def build_chart(
         kwargs = {}
         if "step" in y_fmt_right:
             kwargs["step"] = y_fmt_right["step"]
-        chart.y_format_right(y_fmt_right["style"], **kwargs)
+        if "hidden" in y_fmt_right:
+            kwargs["hidden"] = y_fmt_right["hidden"]
+        chart.y_format_right(y_fmt_right.get("style"), **kwargs)
 
     # 7c. Axis labels
     axis_labels_spec = chart_spec.get("axis_labels", {})
@@ -748,7 +870,9 @@ def build_chart(
         chart.y_lim_right(**chart_spec["y_lim_right"])
 
     # 9. Annotations
-    _apply_annotations(chart, chart_spec.get("annotations", {}))
+    _apply_annotations(
+        chart, chart_spec.get("annotations", {}), x_labels, chart_name,
+    )
 
     # 10. Separators
     _apply_separators(chart, x_labels, chart_spec.get("separators", {}), rows, columns)
